@@ -9,6 +9,7 @@ import com.example.correlation.domain.ServiceLifecycleEvent;
 import com.example.correlation.domain.rca.CandidateAssessment;
 import com.example.correlation.domain.rca.CandidateStatus;
 import com.example.correlation.domain.rca.Evidence;
+import com.example.correlation.execution.EvidenceTimeline;
 import com.example.correlation.repository.ServiceLifecycleEventRepository;
 import com.example.correlation.workflow.WorkflowSpec;
 import org.springframework.beans.factory.annotation.Value;
@@ -131,17 +132,24 @@ public class ServiceDownRule {
      */
     static List<Wait> waits(SagaInstance saga, List<SagaEvent> events, WorkflowSpec workflow, Instant now) {
         if (workflow == null || events == null || events.isEmpty()) return List.of();
-        List<SagaEvent> heard = events.stream()
-                .filter(e -> heardAt(e) != null)
-                .sorted(Comparator.comparing(ServiceDownRule::heardAt))
-                .toList();
+        // Business order decides which step a silence belongs to (I9): events of one run
+        // travel on several topics and are read in whatever order the partitions deliver,
+        // so the event read just before a silence need not be the one that preceded it.
+        // The silence itself is still measured on the platform's clock, from the last
+        // moment anything about the run had been heard.
+        List<SagaEvent> heard = EvidenceTimeline.of(workflow, events.stream()
+                        .filter(e -> heardAt(e) != null).toList())
+                .inBusinessOrder();
         List<Wait> waits = new ArrayList<>();
+        if (heard.isEmpty()) return waits;
 
+        Instant lastHeard = heardAt(heard.get(0));
         for (int i = 1; i < heard.size(); i++) {
             SagaEvent previous = heard.get(i - 1);
             SagaEvent current = heard.get(i);
-            Instant from = heardAt(previous);
+            Instant from = lastHeard;
             Instant to = heardAt(current);
+            if (to.isAfter(lastHeard)) lastHeard = to;
             for (String step : awaitedBetween(workflow, previous, current)) {
                 Optional<String> service = workflow.serviceOf(step);
                 if (service.isEmpty()) continue;
@@ -155,7 +163,7 @@ public class ServiceDownRule {
 
         if (saga.getStatus() != null && !ENDED.contains(saga.getStatus())) {
             SagaEvent last = heard.get(heard.size() - 1);
-            Instant from = heardAt(last);
+            Instant from = lastHeard;
             workflow.classifyEvent(last.getEventType()).ifPresent(role -> {
                 List<String> awaited = switch (role.role()) {
                     case COMPLETED -> workflow.stepsAfter(role.stepId());
