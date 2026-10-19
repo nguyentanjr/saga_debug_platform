@@ -1,5 +1,8 @@
 package com.example.correlation.repository;
 
+import com.example.correlation.domain.Anomaly;
+import com.example.correlation.domain.AnomalyType;
+
 import com.example.correlation.domain.RcaResult;
 import com.example.correlation.domain.SagaEvent;
 import com.example.correlation.domain.SagaInstance;
@@ -45,9 +48,11 @@ class SagaIdsAwaitingAnalysisTest {
     @Autowired private SagaInstanceRepository sagas;
     @Autowired private SagaEventRepository events;
     @Autowired private RcaResultRepository results;
+    @Autowired private AnomalyRepository anomalies;
 
     @BeforeEach
     void clean() {
+        anomalies.deleteAll();
         results.deleteAll();
         events.deleteAll();
         sagas.deleteAll();
@@ -93,7 +98,46 @@ class SagaIdsAwaitingAnalysisTest {
         assertThat(awaiting()).isEmpty();
     }
 
+    /**
+     * A run that went quiet, was diagnosed while waiting, and then completed: the diagnosis
+     * was made on half the evidence. Nothing new was detected when it completed (a source
+     * without per-step completion events gives no step timeout), so the finding-driven pass,
+     * which waits for a new finding, never looked again (FTGO pause runs 7 and 13: R06 never
+     * assessed). Completed runs with findings are due again when evidence outdates the analysis.
+     */
+    @Test
+    void aCompletedRunWithFindingsIsDueWhenEvidenceArrivesAfterItsDiagnosis() {
+        String recovered = run(SagaStatus.COMPLETED, RECEIVED);
+        finding(recovered, RECEIVED.plusSeconds(1));
+        analysed(recovered, RECEIVED.plusSeconds(2));
+        observe(recovered, "completed", RECEIVED.plusSeconds(3));
+
+        assertThat(completedWithFindingsAwaiting()).containsExactly(recovered);
+    }
+
+    @Test
+    void aCompletedRunWithoutFindingsOrWithAFreshDiagnosisIsLeftAlone() {
+        run(SagaStatus.COMPLETED, RECEIVED);                       // healthy: nothing to diagnose
+        String fresh = run(SagaStatus.COMPLETED, RECEIVED);
+        finding(fresh, RECEIVED.plusSeconds(1));
+        analysed(fresh, RECEIVED.plusSeconds(2));                  // already saw everything
+
+        assertThat(completedWithFindingsAwaiting()).isEmpty();
+    }
+
     // ── helpers ───────────────────────────────────────────────────────────────
+
+    private List<String> completedWithFindingsAwaiting() {
+        return sagas.findSagaIdsWithFindingsAwaitingAnalysis(List.of(SagaStatus.COMPLETED), PageRequest.of(0, 50));
+    }
+
+    private void finding(String sagaId, Instant at) {
+        Anomaly anomaly = new Anomaly();
+        anomaly.setSagaId(sagaId);
+        anomaly.setAnomalyType(AnomalyType.SAGA_STUCK);
+        anomaly.setDetectedAt(at);
+        anomalies.save(anomaly);
+    }
 
     private List<String> awaiting() {
         return sagas.findSagaIdsAwaitingAnalysis(ENDED_WITHOUT_SUCCESS, PageRequest.of(0, 50));

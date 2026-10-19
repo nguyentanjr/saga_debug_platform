@@ -449,13 +449,20 @@ public class RcaService {
      * own declared failure (R24) or by a completed compensation (R11) usually has none, so
      * it was analysed only when someone called {@code /rca/analyze}. The analysis itself is
      * unchanged: a FAILED run with nothing to cite still comes out NO_DIAGNOSIS_NEEDED.
-     * COMPLETED is left out on purpose — a completed run with a finding is the pass above.
+     *
+     * <p>COMPLETED runs are included only when they carry findings. The pass above re-runs a
+     * diagnosis when a new finding appears, which left one shape behind: a run diagnosed
+     * while it waited, that then completed without raising anything new — a source with no
+     * per-step completion events gives no step timeout to raise. Its diagnosis was made on
+     * part of its evidence and stayed so (FTGO pause runs: R06 never assessed). A healthy
+     * completion carries no findings and is still not analysed.
      */
     public void autoAnalyzeEndedRuns() {
-        List<String> sagaIds = sagaInstanceRepository.findSagaIdsAwaitingAnalysis(
-                ENDED_WITHOUT_SUCCESS,
-                PageRequest.of(0, detectionProperties.getDetectionBatchSize()));
-        sagaIds.forEach(this::analyzeInOwnTransaction);
+        PageRequest batch = PageRequest.of(0, detectionProperties.getDetectionBatchSize());
+        sagaInstanceRepository.findSagaIdsAwaitingAnalysis(ENDED_WITHOUT_SUCCESS, batch)
+                .forEach(this::analyzeInOwnTransaction);
+        sagaInstanceRepository.findSagaIdsWithFindingsAwaitingAnalysis(List.of(SagaStatus.COMPLETED), batch)
+                .forEach(this::analyzeInOwnTransaction);
     }
 
     private static final List<SagaStatus> ENDED_WITHOUT_SUCCESS =
