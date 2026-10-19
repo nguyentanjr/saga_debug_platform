@@ -312,6 +312,11 @@ public class RcaService {
                     .min(Comparator.naturalOrder()).orElseThrow();
             candidate.setAnchorAt(anchorAt);
             if (workflow == null) continue;
+            // A rule that established its step from its own evidence keeps it. R25 knows the
+            // step the run was waiting on; the event it cites is the one that ended the wait,
+            // which for a source without per-step completions belongs to a later step, and
+            // re-anchoring there put every such crash one step late (EXT-R25-MISS-KITCHEN).
+            if (candidate.getAnchorStepId() != null) continue;
 
             // Every cited event at the earliest instant, not the first one the stream met:
             // when they belong to different steps the evidence does not say which step the
