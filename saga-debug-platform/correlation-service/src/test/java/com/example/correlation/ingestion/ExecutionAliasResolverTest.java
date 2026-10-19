@@ -116,8 +116,9 @@ class ExecutionAliasResolverTest {
         assertThat(resolver.canonical(key(SHOP, "saga-1"), null, "e1", T0))
                 .isEqualTo(key(SHOP, "saga-1"));
 
-        assertThat(stored).isEmpty();
-        verify(aliases, never()).save(any());
+        // The key claims itself and nothing else (EXT-ALIAS-RACE): no link to another id.
+        assertThat(stored.values()).extracting(ExecutionAlias::getExecutionId)
+                .containsExactly(key(SHOP, "saga-1").canonical());
     }
 
     @Test
@@ -125,7 +126,8 @@ class ExecutionAliasResolverTest {
         assertThat(resolver.canonical(key(SHOP, "saga-1"), key(SHOP, "saga-1"), "e1", T0))
                 .isEqualTo(key(SHOP, "saga-1"));
 
-        assertThat(stored).isEmpty();
+        assertThat(stored.values()).extracting(ExecutionAlias::getExecutionId)
+                .containsExactly(key(SHOP, "saga-1").canonical());
     }
 
     // ── the ordinary case: the link arrives with the first event ──────────────

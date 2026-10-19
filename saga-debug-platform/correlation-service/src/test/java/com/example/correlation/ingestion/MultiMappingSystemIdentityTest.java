@@ -2,6 +2,7 @@ package com.example.correlation.ingestion;
 
 import com.example.correlation.domain.CorrelationBasis;
 import com.example.correlation.domain.ExecutionAlias;
+import com.example.correlation.domain.ExecutionKey;
 import com.example.correlation.domain.IngestedEvent;
 import com.example.correlation.domain.SagaInstance;
 import com.example.correlation.messaging.EventTimeResolver;
@@ -334,7 +335,10 @@ class MultiMappingSystemIdentityTest {
         List<IngestedEvent> ingested = allIngested();
         assertThat(ingested.get(0).sagaId()).isEqualTo("hotel-saga::SAGA-1");
         assertThat(ingested.get(1).sagaId()).isEqualTo("partner::SAGA-1");
-        assertThat(aliasRows).isEmpty();
+        // Each key claims only itself (EXT-ALIAS-RACE); none names the other system's run.
+        assertThat(aliasRows.values())
+                .allSatisfy(row -> assertThat(row.getExecutionId())
+                        .isEqualTo(ExecutionKey.of(row.getSourceName(), row.getAliasKey()).canonical()));
     }
 
     /**
