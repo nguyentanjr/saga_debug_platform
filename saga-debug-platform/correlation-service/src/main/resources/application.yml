@@ -46,6 +46,14 @@ spring:
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        # Subscriptions are by pattern, so a topic created after start-up is read only once
+        # the consumer refreshes metadata — 5 minutes by Kafka's default. Systems commonly let
+        # the broker create a topic on its first message: FTGO's command topics appear with
+        # the first saga, and its first runs were silent to the observer until the refresh
+        # (ROADMAP EXT-TOPIC-DISCOVERY). 30 s bounds that gap; the cost is one metadata
+        # request per consumer every 30 s.
+        "[metadata.max.age.ms]": 30000
 
 correlation:
   # Bearer token required to write observations over HTTP (/api/ingest/**,
