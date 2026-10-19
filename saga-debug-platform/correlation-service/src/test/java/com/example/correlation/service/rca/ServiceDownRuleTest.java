@@ -73,6 +73,38 @@ class ServiceDownRuleTest {
         assertThat(finding.get().explainedWait().closingEventId()).isNull();
     }
 
+    /**
+     * A wait belongs to the step awaited after the event that opened it, not to the step of
+     * the event that closed it (EXT-R25-MISS-KITCHEN). A source that does not publish every
+     * step's completion — an orchestrator seen only through its commands, or a completion
+     * event no mapping translates — closes the wait with a later step's event: here payment
+     * was down after ORDER_CREATED and the next thing heard is inventory starting. The old
+     * reading blamed RESERVE_INVENTORY's service and, finding it up, claimed nothing — but
+     * only once the run had ended; while it was still waiting the open-wait reading was
+     * right, so the result depended on when RCA happened to run.
+     */
+    @Test
+    void aWaitClosedByALaterStepsEventIsChargedToTheStepThatWasAwaited() {
+        List<SagaEvent> run = List.of(event("e1", "ORDER_CREATED", 0), event("e2", "INVENTORY_STARTED", 50));
+
+        Optional<ServiceDownRule.Finding> finding = assess(saga(SagaStatus.COMPLETED), run, T0.plusSeconds(60),
+                down("payment-service", T0.minusSeconds(1)), up("payment-service", T0.plusSeconds(45)));
+
+        assertThat(finding).isPresent();
+        assertThat(finding.get().candidate().getAnchorStepId()).isEqualTo("PROCESS_PAYMENT");
+        assertThat(finding.get().explainedWait().closingEventId()).isEqualTo("e2");
+    }
+
+    /** The same run, but the closing step's own service was the one restarted: not the cause. */
+    @Test
+    void theClosingStepsServiceDidNotHoldUpAWaitThatEndedWithItsOwnEvent() {
+        List<SagaEvent> run = List.of(event("e1", "ORDER_CREATED", 0), event("e2", "INVENTORY_STARTED", 50));
+
+        assertThat(assess(saga(SagaStatus.COMPLETED), run, T0.plusSeconds(60),
+                down("inventory-service", T0.minusSeconds(1)), up("inventory-service", T0.plusSeconds(45))))
+                .isEmpty();
+    }
+
     /** No runtime report — the collector off, a pause, a SIGSTOP, a partition: R05/R06 as before. */
     @Test
     void withoutAnyRuntimeReportNothingIsClaimed() {

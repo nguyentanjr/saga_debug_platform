@@ -140,17 +140,16 @@ public class ServiceDownRule {
         for (int i = 1; i < heard.size(); i++) {
             SagaEvent previous = heard.get(i - 1);
             SagaEvent current = heard.get(i);
-            Optional<String> step = workflow.classifyEvent(current.getEventType())
-                    .map(WorkflowSpec.EventRole::stepId);
-            if (step.isEmpty()) continue;
-            Optional<String> service = workflow.serviceOf(step.get());
-            if (service.isEmpty()) continue;
-            int timeout = workflow.getStepTimeoutSeconds(step.get());
             Instant from = heardAt(previous);
             Instant to = heardAt(current);
-            if (Duration.between(from, to).getSeconds() > timeout) {
-                waits.add(new Wait(step.get(), service.get(), from, to, timeout,
-                        current.getEventId(), current.getEventType()));
+            for (String step : awaitedBetween(workflow, previous, current)) {
+                Optional<String> service = workflow.serviceOf(step);
+                if (service.isEmpty()) continue;
+                int timeout = workflow.getStepTimeoutSeconds(step);
+                if (Duration.between(from, to).getSeconds() > timeout) {
+                    waits.add(new Wait(step, service.get(), from, to, timeout,
+                            current.getEventId(), current.getEventType()));
+                }
             }
         }
 
@@ -175,6 +174,28 @@ public class ServiceDownRule {
         }
         waits.sort(Comparator.comparing(Wait::from));
         return waits;
+    }
+
+    /**
+     * The step(s) the run was waiting on between two observations: those awaited after the
+     * earlier one (EXT-R25-MISS-KITCHEN), the same reading the open wait below and the stuck
+     * timeout (EXT-STUCK-TIMEOUT) use. The closing event's own step is the answer only when
+     * the earlier event says nothing about what comes next — it belongs to no step, or ends a
+     * branch — which is how every wait was read before.
+     *
+     * <p>Charging the wait to the closing event's step was right whenever each step publishes
+     * its own completion: the reply that ends the wait belongs to the awaited step. A source
+     * that does not — an orchestrator seen through its commands, an untranslated completion —
+     * ends the wait with a later step's event, and the service that held the run up went
+     * unnamed.
+     */
+    private static List<String> awaitedBetween(WorkflowSpec workflow, SagaEvent previous, SagaEvent current) {
+        List<String> awaited = workflow.stepsAwaitedAfter(previous.getEventType());
+        if (!awaited.isEmpty()) return awaited;
+        return workflow.classifyEvent(current.getEventType())
+                .map(WorkflowSpec.EventRole::stepId)
+                .map(List::of)
+                .orElse(List.of());
     }
 
     /**
