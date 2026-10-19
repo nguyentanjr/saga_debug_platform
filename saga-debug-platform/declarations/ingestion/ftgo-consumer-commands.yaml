@@ -1,0 +1,24 @@
+# Reading an unmodified third-party system: microservices-patterns/ftgo-application
+# (Eventuate Tram, orchestrated CreateOrderSaga). Nothing in it was changed.
+#
+# Commands the orchestrator sends to ftgo-consumer-service. Each carries the saga id in
+# headers.command_saga_id, and most carry the order id inside the embedded payload, so
+# the same record links the saga's identifier to the order's (ALIAS_LINK).
+#
+# Replies are not read: every reply is typed Success or Failure, and which step it
+# answers sits in a second field (commandreply_type). A mapping reads one field for the
+# event type (ROADMAP EXT-COMPOSITE-TYPE), so the outcome is read from what the
+# orchestrator did next instead.
+source:
+  name: ftgo-consumer-commands
+  system: ftgo
+  workflow: FTGO_CREATE_ORDER
+  topicPattern: 'consumerService'
+  fields:
+    executionId: headers.command_saga_id
+    eventId: headers.ID
+    eventType: headers.command_type
+    aliasKey: payload.orderId
+    serviceName: const:ftgo-consumer-service
+  eventTypes:
+    'net.chrisrichardson.ftgo.consumerservice.api.ValidateOrderByConsumer': VALIDATE_REQUESTED
