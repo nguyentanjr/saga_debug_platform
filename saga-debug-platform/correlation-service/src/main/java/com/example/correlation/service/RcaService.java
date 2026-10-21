@@ -116,6 +116,12 @@ public class RcaService {
             return refusal;
         }
 
+        // The diagnosis is of the evidence as read from here on, so it is dated here and not
+        // when the result is built. Dated at construction, an analysis that read a finding and
+        // took a while under load carried a stamp later than that finding's withdrawal, and
+        // the stale-diagnosis sweep never looked at it again (EXT-OVERLOAD-FALSE-FINDINGS:
+        // 17 WRONG_SAGA_CORRELATION_KEY standing after a 2000 ev/s backlog drained).
+        Instant evidenceReadAt = Instant.now();
         List<SagaEvent> events = sagaEventRepository.findBySagaIdOrderByTimestampAsc(sagaId);
         // Only the findings that still stand. A withdrawn claim is one the platform has
         // said later observations falsified; reasoning from it publishes as a diagnosis
@@ -260,6 +266,7 @@ public class RcaService {
                 result.setContributingCauses(objectMapper.writeValueAsString(evidenceLabels));
             }
 
+            result.setCreatedAt(evidenceReadAt);
             rcaResultRepository.save(result);
             emitAlert(result, evidence);
 

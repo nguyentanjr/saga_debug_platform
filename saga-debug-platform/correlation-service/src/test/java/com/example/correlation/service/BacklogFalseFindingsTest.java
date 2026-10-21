@@ -8,6 +8,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -123,6 +124,28 @@ class BacklogFalseFindingsTest {
         deliver(p, "e2", "PAYMENT_COMPLETED", t0.plusMillis(500), t0.plusMillis(500));
 
         verify(p.sagas, atLeastOnce()).findByIdForUpdate(RUN.canonical());
+    }
+
+    /**
+     * A diagnosis is dated when its evidence was read: an analysis slowed by load must not
+     * carry a stamp later than a withdrawal that came after its read.
+     */
+    @Test
+    void aDiagnosisIsDatedWhenItsEvidenceWasRead() {
+        ReplayPipeline p = new ReplayPipeline();
+        Instant t0 = Instant.now().minusSeconds(120);
+        deliver(p, "e2", "PAYMENT_COMPLETED", t0.plusMillis(500), t0);
+        java.util.concurrent.atomic.AtomicReference<Instant> readAt = new java.util.concurrent.atomic.AtomicReference<>();
+        when(p.anomalyRepo.findStandingBySagaId(anyString())).thenAnswer(c -> {
+            readAt.compareAndSet(null, Instant.now());
+            Thread.sleep(50);
+            return p.anomalies.stream().filter(a -> a.getSagaId().equals(c.getArgument(0))
+                    && a.getRetractedAt() == null).toList();
+        });
+
+        com.example.correlation.domain.RcaResult result = p.rca.analyze(RUN.canonical());
+
+        assertThat(result.getCreatedAt()).isBeforeOrEqualTo(readAt.get());
     }
 
     private static List<AnomalyType> standing(ReplayPipeline p) {
