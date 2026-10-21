@@ -235,6 +235,14 @@ def db_metrics(step_id, t0, t_end, clock):
                                 WHERE payload->>'benchStep' = %s)
             GROUP BY 1""", (step_id,))
         anomalies = dict(cur.fetchall())
+        # Bat thuong con dung sau drain + settle (chua bi rut): phan nay moi la ket luan
+        # sai that; phan da rut la hien tuong tam thoi trong luc ton dong.
+        cur.execute("""
+            SELECT a.anomaly_type, count(*) FROM anomalies a
+            WHERE a.retracted_at IS NULL AND a.saga_id IN (SELECT DISTINCT saga_id FROM saga_events
+                                WHERE payload->>'benchStep' = %s)
+            GROUP BY 1""", (step_id,))
+        standing = dict(cur.fetchall())
         cur.execute("SELECT pg_database_size(current_database())")
         size = cur.fetchone()[0]
     end_vm = t_end + clock.offset(t_end)
@@ -258,7 +266,7 @@ def db_metrics(step_id, t0, t_end, clock):
             "latency_ms": {"p50": pct(0.5), "p95": pct(0.95), "p99": pct(0.99),
                            "min": pct(0.0), "max": pct(1.0),
                            "excluded_clock_jump": skipped},
-            "anomalies": anomalies, "db_size_mib": round(size / 2**20, 1)}
+            "anomalies": anomalies, "anomalies_standing": standing, "db_size_mib": round(size / 2**20, 1)}
 
 
 def _r(x):
