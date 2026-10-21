@@ -1,0 +1,62 @@
+# Benchmark tai cua observer (B2). Chi gom Kafka + PostgreSQL + correlation-service, khong co
+# service nghiep vu: tai do benchmark/load_observer.py bom thang vao Kafka voi dung topic va
+# payload ma order/payment/inventory-service phat ra. Cong host rieng (39092/35432/38084) de
+# chay canh cac stack khac. Gioi han tai nguyen co dinh de so lieu tai lap duoc.
+#
+#   docker build -t sdp-bench-observer:<commit> correlation-service   (jar tu commit do)
+#   OBSERVER_IMAGE=sdp-bench-observer:<commit> docker compose -p sdp-bench \
+#       -f benchmark/docker-compose.bench.yml up -d
+name: sdp-bench
+services:
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: bench-kafka
+    ports: ["39092:39092"]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:9092,EXTERNAL://:39092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://bench-kafka:9092,EXTERNAL://localhost:39092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@bench-kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+
+  postgres:
+    image: postgres:15
+    container_name: bench-postgres
+    ports: ["35432:5432"]
+    environment:
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
+      POSTGRES_DB: correlation_db
+    deploy:
+      resources:
+        limits: { cpus: "2", memory: 2g }
+
+  observer:
+    image: ${OBSERVER_IMAGE:?set OBSERVER_IMAGE}
+    container_name: bench-observer
+    depends_on: [postgres, kafka]
+    ports: ["38084:8084"]
+    environment:
+      CORRELATION_DB_HOST: bench-postgres
+      CORRELATION_DB_PORT: 5432
+      CORRELATION_DB_USERNAME: demo
+      CORRELATION_DB_PASSWORD: demo
+      KAFKA_BOOTSTRAP_SERVERS: bench-kafka:9092
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: bench-kafka:9092
+      CORRELATION_DECLARATIONS_DIR: /app/declarations
+      # Khong co Docker runtime trong benchmark: do observer chi-tu-event.
+      CORRELATION_LIVENESS_DOCKER_ENABLED: "false"
+    volumes:
+      - ../declarations:/app/declarations:ro
+    deploy:
+      resources:
+        limits: { cpus: "2", memory: 2g }

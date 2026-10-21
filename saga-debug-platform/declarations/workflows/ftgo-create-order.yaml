@@ -1,0 +1,67 @@
+# CreateOrderSaga of microservices-patterns/ftgo-application, read from
+# CreateOrderSaga.java and the participants' command handlers, not from the book.
+#
+#   validate consumer -> create ticket -> authorize card -> confirm ticket -> approve order
+#   consumer unknown  -> reject order
+#
+# Outcome of a step is what the orchestrator did next (replies carry the step in a second
+# field, see the mappings). A rejection right after validation is the consumer check
+# failing: ConsumerServiceCommandHandlers replies Failure on ConsumerNotFoundException.
+#
+# Not declared, because the source cannot reach them: kitchen replies Failure only on
+# RestaurantDetailsVerificationException, which nothing throws, and accounting only on
+# AccountDisabledException, which nothing raises. A specification that expected those
+# branches would describe a system that does not exist.
+workflow:
+  name: FTGO_CREATE_ORDER
+  version: 'ftgo-application master'
+  sources: [ftgo]
+  runtimeScope: ftgo
+  steps:
+    - id: CREATE_ORDER
+      service: ftgo-order-service
+      timeout: 30s
+      events:
+        started: ORDER_CREATED
+    - id: VALIDATE_CONSUMER
+      service: ftgo-consumer-service
+      timeout: 30s
+      events:
+        started: VALIDATE_REQUESTED
+        failed: REJECT_REQUESTED
+    - id: CREATE_TICKET
+      service: ftgo-kitchen-service
+      timeout: 30s
+      events:
+        started: TICKET_CREATE_REQUESTED
+    - id: AUTHORIZE_CARD
+      service: ftgo-accounting-service
+      timeout: 30s
+      events:
+        started: AUTHORIZE_REQUESTED
+    - id: CONFIRM_TICKET
+      service: ftgo-kitchen-service
+      timeout: 30s
+      events:
+        started: TICKET_CONFIRM_REQUESTED
+    - id: APPROVE_ORDER
+      service: ftgo-order-service
+      timeout: 30s
+      events:
+        started: APPROVE_REQUESTED
+        completed: ORDER_AUTHORIZED
+    - id: REJECT_ORDER
+      service: ftgo-order-service
+      timeout: 30s
+      events:
+        completed: ORDER_REJECTED
+  transitions:
+    - {from: STARTED, to: CREATE_ORDER}
+    - {from: CREATE_ORDER, to: VALIDATE_CONSUMER, condition: SUCCESS}
+    - {from: VALIDATE_CONSUMER, to: CREATE_TICKET, condition: SUCCESS}
+    - {from: VALIDATE_CONSUMER, to: REJECT_ORDER, condition: FAILED}
+    - {from: CREATE_TICKET, to: AUTHORIZE_CARD, condition: SUCCESS}
+    - {from: AUTHORIZE_CARD, to: CONFIRM_TICKET, condition: SUCCESS}
+    - {from: CONFIRM_TICKET, to: APPROVE_ORDER, condition: SUCCESS}
+    - {from: APPROVE_ORDER, to: COMPLETED, condition: SUCCESS}
+    - {from: REJECT_ORDER, to: FAILED, condition: SUCCESS}

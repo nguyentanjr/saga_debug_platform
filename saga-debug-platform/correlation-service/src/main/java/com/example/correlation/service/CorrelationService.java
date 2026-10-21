@@ -94,8 +94,12 @@ public class CorrelationService {
             return;
         }
 
-        
-        SagaInstance saga = sagaInstanceRepository.findById(sagaId).orElse(null);
+        // Locked, not only versioned: RCA locks this row to read the run's findings, and the
+        // withdrawals below are written before this transaction commits. With only the
+        // version check an analysis could read a finding this ingest had already withdrawn
+        // and stamp its diagnosis after the withdrawal, so the stale-diagnosis sweep never saw
+        // it (EXT-OVERLOAD-FALSE-FINDINGS: 10 WRONG_SAGA_CORRELATION_KEY on 2000 ev/s).
+        SagaInstance saga = sagaInstanceRepository.findByIdForUpdate(sagaId).orElse(null);
 
         // Loaded once and reused by every detector below. Each detector used to issue
         // its own findBySagaIdOrderBy... for the same rows, so processing one event
@@ -222,6 +226,8 @@ public class CorrelationService {
         // absent, which is what withdraws it.
         anomalyDetectionService.detectOrphanEvent(workflow, sagaId, sagaEvents);
         anomalyDetectionService.withdrawAcknowledgedCompensation(workflow, sagaId, sagaEvents);
+        anomalyDetectionService.withdrawStartedCompensation(workflow, sagaId, sagaEvents);
+        anomalyDetectionService.withdrawDisprovenSilence(workflow, sagaId, sagaEvents);
 
         judgeTransitions(workflow, sagaId, timeline);
     }

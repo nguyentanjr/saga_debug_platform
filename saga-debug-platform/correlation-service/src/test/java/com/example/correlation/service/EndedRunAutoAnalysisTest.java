@@ -48,6 +48,23 @@ class EndedRunAutoAnalysisTest {
         assertThat(statuses.getValue()).containsExactlyInAnyOrder(SagaStatus.FAILED, SagaStatus.COMPENSATED);
     }
 
+    /**
+     * A run diagnosed while it waited and then completed is analysed again once evidence
+     * outdates the diagnosis, even though completing raised no new finding.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void completedRunsWithFindingsAndNewerEvidenceAreAnalysedAgain() {
+        when(sagas.findSagaIdsWithFindingsAwaitingAnalysis(any(), any())).thenReturn(List.of("recovered"));
+
+        sweep.autoAnalyzeEndedRuns();
+
+        verify(self).analyze("recovered");
+        ArgumentCaptor<Collection<SagaStatus>> statuses = ArgumentCaptor.forClass(Collection.class);
+        verify(sagas).findSagaIdsWithFindingsAwaitingAnalysis(statuses.capture(), any());
+        assertThat(statuses.getValue()).containsExactly(SagaStatus.COMPLETED);
+    }
+
     @Test
     void oneRunThatCannotBeAnalysedDoesNotStopTheRest() {
         when(sagas.findSagaIdsAwaitingAnalysis(any(), any())).thenReturn(List.of("broken", "fine"));

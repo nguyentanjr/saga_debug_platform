@@ -73,6 +73,62 @@ class ServiceDownRuleTest {
         assertThat(finding.get().explainedWait().closingEventId()).isNull();
     }
 
+    /**
+     * A wait belongs to the step awaited after the event that opened it, not to the step of
+     * the event that closed it (EXT-R25-MISS-KITCHEN). A source that does not publish every
+     * step's completion — an orchestrator seen only through its commands, or a completion
+     * event no mapping translates — closes the wait with a later step's event: here payment
+     * was down after ORDER_CREATED and the next thing heard is inventory starting. The old
+     * reading blamed RESERVE_INVENTORY's service and, finding it up, claimed nothing — but
+     * only once the run had ended; while it was still waiting the open-wait reading was
+     * right, so the result depended on when RCA happened to run.
+     */
+    @Test
+    void aWaitClosedByALaterStepsEventIsChargedToTheStepThatWasAwaited() {
+        List<SagaEvent> run = List.of(event("e1", "ORDER_CREATED", 0), event("e2", "INVENTORY_STARTED", 50));
+
+        Optional<ServiceDownRule.Finding> finding = assess(saga(SagaStatus.COMPLETED), run, T0.plusSeconds(60),
+                down("payment-service", T0.minusSeconds(1)), up("payment-service", T0.plusSeconds(45)));
+
+        assertThat(finding).isPresent();
+        assertThat(finding.get().candidate().getAnchorStepId()).isEqualTo("PROCESS_PAYMENT");
+        assertThat(finding.get().explainedWait().closingEventId()).isEqualTo("e2");
+    }
+
+    /**
+     * Which step the run waited on is decided in business order, not in the order the
+     * observer happened to read the events (I9). Events of one run travel on several topics;
+     * here ORDER_CREATED is read after PAYMENT_COMPLETED although it happened first. Read
+     * order put ORDER_CREATED right before the silence and charged it to payment; inventory,
+     * the service actually awaited and actually down, went unnamed (FTGO order 6, where the
+     * first saga command was read last).
+     */
+    @Test
+    void theAwaitedStepFollowsBusinessOrderEvenWhenEventsWereReadOutOfOrder() {
+        List<SagaEvent> run = List.of(
+                event("e1", "ORDER_CREATED", 0, 2),        // happened first, read second
+                event("e2", "PAYMENT_COMPLETED", 1, 1),
+                event("e3", "INVENTORY_RESERVED", 50, 50));
+
+        Optional<ServiceDownRule.Finding> finding = assess(saga(SagaStatus.COMPLETED), run, T0.plusSeconds(60),
+                down("inventory-service", T0.minusSeconds(1)), up("inventory-service", T0.plusSeconds(45)));
+
+        assertThat(finding).isPresent();
+        assertThat(finding.get().candidate().getAnchorStepId()).isEqualTo("RESERVE_INVENTORY");
+        // the wait is still measured on the observer's clock, from the last thing heard
+        assertThat(finding.get().explainedWait().from()).isEqualTo(T0.plusSeconds(2));
+    }
+
+    /** The same run, but the closing step's own service was the one restarted: not the cause. */
+    @Test
+    void theClosingStepsServiceDidNotHoldUpAWaitThatEndedWithItsOwnEvent() {
+        List<SagaEvent> run = List.of(event("e1", "ORDER_CREATED", 0), event("e2", "INVENTORY_STARTED", 50));
+
+        assertThat(assess(saga(SagaStatus.COMPLETED), run, T0.plusSeconds(60),
+                down("inventory-service", T0.minusSeconds(1)), up("inventory-service", T0.plusSeconds(45))))
+                .isEmpty();
+    }
+
     /** No runtime report — the collector off, a pause, a SIGSTOP, a partition: R05/R06 as before. */
     @Test
     void withoutAnyRuntimeReportNothingIsClaimed() {
@@ -243,11 +299,15 @@ class ServiceDownRuleTest {
     }
 
     private static SagaEvent event(String id, String type, int atSecond) {
+        return event(id, type, atSecond, atSecond);
+    }
+
+    private static SagaEvent event(String id, String type, int happenedAtSecond, int readAtSecond) {
         SagaEvent e = new SagaEvent();
         e.setEventId(id);
         e.setEventType(type);
-        e.setTimestamp(T0.plusSeconds(atSecond));
-        e.setReceivedAt(T0.plusSeconds(atSecond));
+        e.setTimestamp(T0.plusSeconds(happenedAtSecond));
+        e.setReceivedAt(T0.plusSeconds(readAtSecond));
         return e;
     }
 

@@ -76,10 +76,19 @@ public interface AnomalyRepository extends JpaRepository<Anomaly, Long> {
             @Param("reason") String reason);
     int deleteByDetectedAtBefore(Instant cutoff);
 
-    @Query("SELECT DISTINCT a.sagaId FROM Anomaly a WHERE a.detectedAt >= :since")
+    /**
+     * Runs whose findings changed since the instant: raised, or withdrawn. A withdrawal changes
+     * the evidence a diagnosis rests on as much as a new finding does; counting only raises left
+     * a diagnosis made while ORPHAN_EVENT stood, and written just after it was withdrawn,
+     * standing for good (EXT-OVERLOAD-FALSE-FINDINGS, bench 2000 ev/s).
+     */
+    @Query("SELECT DISTINCT a.sagaId FROM Anomaly a WHERE a.detectedAt >= :since "
+            + "OR a.retractedAt >= :since")
     List<String> findSagaIdsWithAnomaliesSince(@Param("since") Instant since);
 
-    @Query("SELECT MAX(a.detectedAt) FROM Anomaly a WHERE a.sagaId = :sagaId")
+    /** When this run's findings last changed: the latest raise or withdrawal. */
+    @Query("SELECT MAX(CASE WHEN a.retractedAt IS NOT NULL AND a.retractedAt > a.detectedAt "
+            + "THEN a.retractedAt ELSE a.detectedAt END) FROM Anomaly a WHERE a.sagaId = :sagaId")
     Instant findLatestDetectedAtBySagaId(@Param("sagaId") String sagaId);
 
     /**

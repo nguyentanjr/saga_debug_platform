@@ -116,6 +116,12 @@ public class RcaService {
             return refusal;
         }
 
+        // The diagnosis is of the evidence as read from here on, so it is dated here and not
+        // when the result is built. Dated at construction, an analysis that read a finding and
+        // took a while under load carried a stamp later than that finding's withdrawal, and
+        // the stale-diagnosis sweep never looked at it again (EXT-OVERLOAD-FALSE-FINDINGS:
+        // 17 WRONG_SAGA_CORRELATION_KEY standing after a 2000 ev/s backlog drained).
+        Instant evidenceReadAt = Instant.now();
         List<SagaEvent> events = sagaEventRepository.findBySagaIdOrderByTimestampAsc(sagaId);
         // Only the findings that still stand. A withdrawn claim is one the platform has
         // said later observations falsified; reasoning from it publishes as a diagnosis
@@ -260,6 +266,7 @@ public class RcaService {
                 result.setContributingCauses(objectMapper.writeValueAsString(evidenceLabels));
             }
 
+            result.setCreatedAt(evidenceReadAt);
             rcaResultRepository.save(result);
             emitAlert(result, evidence);
 
@@ -312,6 +319,11 @@ public class RcaService {
                     .min(Comparator.naturalOrder()).orElseThrow();
             candidate.setAnchorAt(anchorAt);
             if (workflow == null) continue;
+            // A rule that established its step from its own evidence keeps it. R25 knows the
+            // step the run was waiting on; the event it cites is the one that ended the wait,
+            // which for a source without per-step completions belongs to a later step, and
+            // re-anchoring there put every such crash one step late (EXT-R25-MISS-KITCHEN).
+            if (candidate.getAnchorStepId() != null) continue;
 
             // Every cited event at the earliest instant, not the first one the stream met:
             // when they belong to different steps the evidence does not say which step the
@@ -449,13 +461,20 @@ public class RcaService {
      * own declared failure (R24) or by a completed compensation (R11) usually has none, so
      * it was analysed only when someone called {@code /rca/analyze}. The analysis itself is
      * unchanged: a FAILED run with nothing to cite still comes out NO_DIAGNOSIS_NEEDED.
-     * COMPLETED is left out on purpose — a completed run with a finding is the pass above.
+     *
+     * <p>COMPLETED runs are included only when they carry findings. The pass above re-runs a
+     * diagnosis when a new finding appears, which left one shape behind: a run diagnosed
+     * while it waited, that then completed without raising anything new — a source with no
+     * per-step completion events gives no step timeout to raise. Its diagnosis was made on
+     * part of its evidence and stayed so (FTGO pause runs: R06 never assessed). A healthy
+     * completion carries no findings and is still not analysed.
      */
     public void autoAnalyzeEndedRuns() {
-        List<String> sagaIds = sagaInstanceRepository.findSagaIdsAwaitingAnalysis(
-                ENDED_WITHOUT_SUCCESS,
-                PageRequest.of(0, detectionProperties.getDetectionBatchSize()));
-        sagaIds.forEach(this::analyzeInOwnTransaction);
+        PageRequest batch = PageRequest.of(0, detectionProperties.getDetectionBatchSize());
+        sagaInstanceRepository.findSagaIdsAwaitingAnalysis(ENDED_WITHOUT_SUCCESS, batch)
+                .forEach(this::analyzeInOwnTransaction);
+        sagaInstanceRepository.findSagaIdsWithFindingsAwaitingAnalysis(List.of(SagaStatus.COMPLETED), batch)
+                .forEach(this::analyzeInOwnTransaction);
     }
 
     private static final List<SagaStatus> ENDED_WITHOUT_SUCCESS =

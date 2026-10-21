@@ -1,0 +1,17 @@
+# Domain events of the Order aggregate in microservices-patterns/ftgo-application.
+# Keyed by the order id (event-aggregate-id), not the saga id: the commands mapping links
+# the two through the orderId they carry.
+source:
+  name: ftgo-order-events
+  system: ftgo
+  workflow: FTGO_CREATE_ORDER
+  topicPattern: 'net\.chrisrichardson\.ftgo\.orderservice\.domain\.Order'
+  fields:
+    executionId: headers.event-aggregate-id
+    eventId: headers.ID
+    eventType: headers.event-type
+    serviceName: const:ftgo-order-service
+  eventTypes:
+    'net.chrisrichardson.ftgo.orderservice.api.events.OrderCreatedEvent': ORDER_CREATED
+    'net.chrisrichardson.ftgo.orderservice.api.events.OrderAuthorized': ORDER_AUTHORIZED
+    'net.chrisrichardson.ftgo.orderservice.api.events.OrderRejected': ORDER_REJECTED

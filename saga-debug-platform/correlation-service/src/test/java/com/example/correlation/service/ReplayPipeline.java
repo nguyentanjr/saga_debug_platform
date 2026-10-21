@@ -70,6 +70,8 @@ final class ReplayPipeline {
         });
         when(anomalyRepo.save(any())).thenAnswer(c -> {
             Anomaly a = c.getArgument(0);
+            // The ablated arm withholds every withdrawal, including those saved row by row.
+            if (!retractionEnabled) { a.setRetractedAt(null); a.setRetractionReason(null); }
             if (a.getId() == null) { a.setId((long) anomalies.size() + 1); anomalies.add(a); }
             return a;
         });

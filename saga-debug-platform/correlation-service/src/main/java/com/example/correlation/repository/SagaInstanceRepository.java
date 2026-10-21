@@ -72,6 +72,26 @@ public interface SagaInstanceRepository extends JpaRepository<SagaInstance, Stri
             @Param("statuses") Collection<SagaStatus> statuses, Pageable pageable);
 
     /**
+     * The same staleness test, restricted to runs that carry findings. For completed runs:
+     * a run diagnosed while it waited and later finished holds a diagnosis made on part of
+     * its evidence, and finishing need not raise any new finding to trigger the finding-
+     * driven pass. Runs without findings are left out, so healthy completions are not
+     * analysed for nothing.
+     */
+    @Query("""
+            SELECT s.sagaId FROM SagaInstance s
+            WHERE s.status IN :statuses
+              AND EXISTS (SELECT a.id FROM Anomaly a WHERE a.sagaId = s.sagaId)
+              AND NOT EXISTS (
+                  SELECT r.id FROM RcaResult r
+                  WHERE r.sagaId = s.sagaId
+                    AND r.createdAt >= (SELECT MAX(e.receivedAt) FROM SagaEvent e
+                                        WHERE e.sagaId = s.sagaId))
+            ORDER BY s.lastUpdated DESC""")
+    List<String> findSagaIdsWithFindingsAwaitingAnalysis(
+            @Param("statuses") Collection<SagaStatus> statuses, Pageable pageable);
+
+    /**
      * Locks the saga row for the duration of the caller's transaction.
      *
      * <p>RCA analysis deletes the previous result and writes a new one. Two analyses of

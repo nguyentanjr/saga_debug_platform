@@ -71,6 +71,7 @@ class RealProjectIntegrationTest {
     void everyCapturedRunIsReadAsItsSourceSettledIt() {
         List<String> failures = new ArrayList<>();
         Map<String, int[]> perSystem = new TreeMap<>();   // system -> {runs, correct}
+        List<Map<String, Object>> observed = new ArrayList<>();   // forward order, for baselines
 
         for (JsonNode fixture : fixtures) {
             String name = fixture.get("fixture").asText();
@@ -95,6 +96,10 @@ class RealProjectIntegrationTest {
                 List<String> standing = run.standing().stream()
                         .filter(t -> t != AnomalyType.OUT_OF_ORDER).map(Enum::name).sorted().toList();
                 standingByOrder.put(order.getKey(), standing);
+                if ("forward".equals(order.getKey())) {
+                    observed.add(Map.of("fixture", name, "system", system, "status", run.status(),
+                            "standing", standing));
+                }
                 standingAcrossOrders.add(String.join(",", standing));
                 Set<String> mustFind = new TreeSet<>();
                 fixture.get("expectedFindings").forEach(f -> mustFind.add(f.asText()));
@@ -115,9 +120,24 @@ class RealProjectIntegrationTest {
             }
         }
 
+        writeObserved(observed);
         perSystem.forEach((system, t) ->
                 System.out.printf("REAL-PROJECT %-10s status correct %d/%d%n", system, t[1], t[0]));
         assertThat(failures).isEmpty();
+    }
+
+    /**
+     * What the observer concluded per run, for the external baseline to be compared against
+     * (tools/pm4py_real_baseline.py). Written to target/, never read back by a test.
+     */
+    private static void writeObserved(List<Map<String, Object>> observed) {
+        try {
+            Path out = Path.of("target", "real-project-observer.json");
+            Files.createDirectories(out.getParent());
+            new ObjectMapper().writerWithDefaultPrettyPrinter().writeValue(out.toFile(), observed);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
     }
 
     private static List<ReplayHarness.CapturedEvent> events(JsonNode fixture, List<Integer> order) {

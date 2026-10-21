@@ -108,7 +108,18 @@ public class ExecutionAliasResolver {
         }
         if (alias == null || alias.equals(declared)) {
             // Nothing new is claimed, but this key may itself already be an alias.
-            return lookup(declared).orElse(declared);
+            Optional<ExecutionKey> known = lookup(declared);
+            if (known.isPresent()) {
+                return known.get();
+            }
+            // First sighting: the key claims itself (EXT-ALIAS-RACE). Without this row, a
+            // worker linking this key from another identifier at the same moment could not
+            // see this execution — it is not committed yet — and would file the key under
+            // its own run, leaving this one behind for good. With it, the primary key of
+            // execution_aliases arbitrates: the second claimant fails on commit, its record
+            // is retried, and the retry reads the committed execution and folds it.
+            register(declared, declared, eventId, observedAt);
+            return declared;
         }
 
         ExecutionKey left = lookup(declared).orElse(declared);
