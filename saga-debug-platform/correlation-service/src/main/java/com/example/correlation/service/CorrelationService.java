@@ -222,6 +222,8 @@ public class CorrelationService {
         // absent, which is what withdraws it.
         anomalyDetectionService.detectOrphanEvent(workflow, sagaId, sagaEvents);
         anomalyDetectionService.withdrawAcknowledgedCompensation(workflow, sagaId, sagaEvents);
+        anomalyDetectionService.withdrawStartedCompensation(workflow, sagaId, sagaEvents);
+        anomalyDetectionService.withdrawDisprovenSilence(workflow, sagaId, sagaEvents);
 
         judgeTransitions(workflow, sagaId, timeline);
     }

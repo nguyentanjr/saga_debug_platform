@@ -538,8 +538,9 @@ public class AnomalyDetectionService {
      *
      * <p>The finding says no terminal event was seen; the ending falsifies it, and leaving
      * it standing made a recovered run read as never having finished (SC16 lost R06, whose
-     * guard is the absence of this finding). SAGA_STUCK is not withdrawn: the silence it
-     * reports did happen, and R06 is built on it.
+     * guard is the absence of this finding). SAGA_STUCK is not withdrawn here: a silence
+     * that happened at the source stays, and R06 is built on it -- only one the source's
+     * stamps disprove is ({@link #withdrawDisprovenSilence}).
      */
     /**
      * Withdraws an ordering finding the whole evidence no longer establishes (F28).
@@ -732,8 +733,13 @@ public class AnomalyDetectionService {
         for (SagaInstance saga : runningSagas) {
             if (saga.hasWorkflowConflict()) continue;
             WorkflowSpec workflow = specFor(saga);
-            SagaEvent lastEvent = sagaEventRepository
-                    .findTopBySagaIdOrderByTimestampDesc(saga.getSagaId())
+            List<SagaEvent> stored = sagaEventRepository.findBySagaIdOrderByTimestampAsc(saga.getSagaId());
+            // EXT-OVERLOAD-FALSE-FINDINGS: the last thing heard is the latest arrival, not the
+            // latest source stamp. Under backlog the run's newest-stamped event can have been
+            // read minutes before an earlier-stamped one that arrived just now (bench 2000 ev/s:
+            // SAGA_STUCK 70 ms after ORDER_CREATED was read, "silent since" PAYMENT_REFUNDED).
+            SagaEvent lastEvent = stored.stream()
+                    .max(Comparator.comparing(AnomalyDetectionService::lastHeardAt))
                     .orElse(null);
             if (lastEvent == null) continue;
 
@@ -742,13 +748,17 @@ public class AnomalyDetectionService {
             // finished, or, for an event the workflow does not know (ewallet COMMISSION_REQUESTED),
             // the 60s default -- so every W2N transfer waiting its declared 15m for release was
             // reported stuck after a minute. The clock still starts at the last thing heard.
-            int timeoutSeconds = detectionProperties.getDefaultStepTimeoutSeconds();
-            String timeoutSource = "config:anomaly.detection.default-step-timeout-seconds";
-            List<String> awaited = awaitedSteps(workflow, saga.getSagaId());
-            if (!awaited.isEmpty()) {
-                timeoutSeconds = awaited.stream().mapToInt(workflow::getStepTimeoutSeconds).max().orElse(timeoutSeconds);
-                timeoutSource = "workflow:" + String.join("|", awaited) + ".timeout";
-            }
+            EvidenceTimeline timeline = workflow == null ? null : EvidenceTimeline.of(workflow, stored);
+            // EXT-OVERLOAD-FALSE-FINDINGS: the run list was read before this pass reached the
+            // run; an ingest in between can have ended it (bench 2000 ev/s: 15 SAGA_STUCK
+            // citing the run's own terminal event). An ended run awaits nothing.
+            if (timeline != null && timeline.endedAt().isPresent()) continue;
+            List<SagaEvent> inOrder = timeline == null ? List.of() : timeline.inBusinessOrder();
+            List<String> awaited = awaitedSteps(workflow, inOrder);
+            int timeoutSeconds = silenceTimeoutSeconds(workflow, awaited);
+            String timeoutSource = awaited.isEmpty()
+                    ? "config:anomaly.detection.default-step-timeout-seconds"
+                    : "workflow:" + String.join("|", awaited) + ".timeout";
 
             Instant lastHeardAt = lastHeardAt(lastEvent);
             if (lastHeardAt.plus(timeoutSeconds, ChronoUnit.SECONDS).isBefore(now)) {
@@ -780,10 +790,8 @@ public class AnomalyDetectionService {
      * Observations it cannot place say nothing about which step is in progress. Falls back
      * to that observation's own step when its outcome leads to no further step.
      */
-    private List<String> awaitedSteps(WorkflowSpec workflow, String sagaId) {
+    private List<String> awaitedSteps(WorkflowSpec workflow, List<SagaEvent> inOrder) {
         if (workflow == null) return List.of();
-        List<SagaEvent> inOrder = EvidenceTimeline.of(workflow,
-                sagaEventRepository.findBySagaIdOrderByTimestampAsc(sagaId)).inBusinessOrder();
         for (int i = inOrder.size() - 1; i >= 0; i--) {
             String type = inOrder.get(i).getEventType();
             String step = workflow.getExpectedStepForEvent(type);
@@ -792,6 +800,65 @@ public class AnomalyDetectionService {
             return next.isEmpty() ? List.of(step) : next;
         }
         return List.of();
+    }
+
+    private int silenceTimeoutSeconds(WorkflowSpec workflow, List<String> awaited) {
+        return awaited.stream().mapToInt(step -> workflow.getStepTimeoutSeconds(step)).max()
+                .orElse(detectionProperties.getDefaultStepTimeoutSeconds());
+    }
+
+    /**
+     * EXT-OVERLOAD-FALSE-FINDINGS: withdraws a SAGA_STUCK whose silence the run never had.
+     *
+     * <p>Silence is measured on the platform's clock, which is right for a source that has
+     * gone quiet and wrong for an observer that is behind: under backlog the next event sits
+     * unread in Kafka while the run is reported stuck (bench 1000 ev/s: 39 standing on runs
+     * that completed within a second). Once that event arrives the evidence settles it: if
+     * the event following the cited one in business order happened, by the source's own
+     * stamps, within the awaited step's timeout, the run did not stall -- the reading did.
+     * A duration between two events of one run is what the source clock is right for.
+     * A real stall (paused service, R06) shows the gap in the source stamps too and stays.
+     */
+    public void withdrawDisprovenSilence(WorkflowSpec workflow, String sagaId, List<SagaEvent> inOrder) {
+        if (!anomalyRepository.existsBySagaIdAndAnomalyType(sagaId, AnomalyType.SAGA_STUCK)) return;
+        Instant now = Instant.now();
+        for (Anomaly anomaly : anomalyRepository.findStandingBySagaId(sagaId)) {
+            if (anomaly.getAnomalyType() != AnomalyType.SAGA_STUCK) continue;
+            List<String> cited = anomaly.getEvidenceEventIds();
+            if (cited == null || cited.isEmpty()) continue;
+            int at = -1;
+            for (int i = 0; i < inOrder.size(); i++) {
+                if (cited.get(0).equals(inOrder.get(i).getEventId())) { at = i; break; }
+            }
+            if (at < 0 || at == inOrder.size() - 1) continue;
+            SagaEvent last = inOrder.get(at);
+            SagaEvent next = inOrder.get(at + 1);
+            int timeout = silenceTimeoutSeconds(workflow, awaitedSteps(workflow, inOrder.subList(0, at + 1)));
+            if (Duration.between(last.getTimestamp(), next.getTimestamp()).getSeconds() > timeout) continue;
+            anomaly.setRetractedAt(now);
+            anomaly.setRetractionReason(String.format("%s followed %s within %ds by the source's "
+                    + "stamps; the silence was the observer reading late", next.getEventType(),
+                    last.getEventType(), timeout));
+            anomalyRepository.save(anomaly);
+            log.info("Withdrew SAGA_STUCK against execution {}: {} arrived late but happened in time",
+                    sagaId, next.getEventType());
+        }
+    }
+
+    /**
+     * EXT-OVERLOAD-FALSE-FINDINGS: withdraws COMPENSATION_MISSING once a compensation start
+     * is in hand. An absence claim, falsified by the event it says is absent -- which under
+     * backlog is simply still unread (bench 1000 ev/s: 61 standing on COMPENSATED runs).
+     */
+    public void withdrawStartedCompensation(WorkflowSpec workflow, String sagaId, List<SagaEvent> events) {
+        if (workflow == null) return;
+        if (!anomalyRepository.existsBySagaIdAndAnomalyType(sagaId, AnomalyType.COMPENSATION_MISSING)) return;
+        if (compensationEvents(workflow, events, WorkflowSpec.EventRole.Role.STARTED).isEmpty()) return;
+        int withdrawn = anomalyRepository.retractClaims(sagaId, Set.of(AnomalyType.COMPENSATION_MISSING),
+                Instant.now(), "a compensation start was observed after this finding was made");
+        if (withdrawn > 0) {
+            log.info("Withdrew COMPENSATION_MISSING against execution {}: compensation started", sagaId);
+        }
     }
 
     public void detectStepTimeouts() {
