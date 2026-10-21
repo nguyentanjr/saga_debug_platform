@@ -125,6 +125,25 @@ class SagaIdsAwaitingAnalysisTest {
         assertThat(completedWithFindingsAwaiting()).isEmpty();
     }
 
+    /**
+     * EXT-OVERLOAD-FALSE-FINDINGS: a diagnosis written after the last observation but before
+     * a finding it cited was withdrawn is stale, and the finding-driven pass has to see it.
+     */
+    @Test
+    void aWithdrawalAfterTheDiagnosisCountsAsAChangedFinding() {
+        String id = run(SagaStatus.COMPLETED, RECEIVED);
+        Anomaly orphan = new Anomaly();
+        orphan.setSagaId(id);
+        orphan.setAnomalyType(AnomalyType.ORPHAN_EVENT);
+        orphan.setDetectedAt(RECEIVED.minusSeconds(1));
+        orphan.setRetractedAt(RECEIVED.plusSeconds(2));
+        anomalies.save(orphan);
+        analysed(id, RECEIVED.plusSeconds(1));
+
+        assertThat(anomalies.findLatestDetectedAtBySagaId(id)).isEqualTo(RECEIVED.plusSeconds(2));
+        assertThat(anomalies.findSagaIdsWithAnomaliesSince(RECEIVED.plusSeconds(2))).containsExactly(id);
+    }
+
     // ── helpers ───────────────────────────────────────────────────────────────
 
     private List<String> completedWithFindingsAwaiting() {
