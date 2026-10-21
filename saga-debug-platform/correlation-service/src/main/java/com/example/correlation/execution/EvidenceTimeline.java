@@ -132,23 +132,50 @@ public final class EvidenceTimeline {
      * than its cause ({@link #at}), and a declared ancestor is before its descendants
      * whatever the stamps say ({@link #isAncestor}). Where no causation is declared, or the
      * cause is not in hand, the clock decides exactly as before.
+     *
+     * <p>EXT-HOTEL-EVENT-TIME: a step's outcome is caused by that step's start, and the
+     * specification says so even when the producer does not. Hotel (semotpan, live
+     * 2026-10-21) stamped PAYMENT_REJECTED 0.6 s before the TAKE_PAYMENT_REQUESTED it answered;
+     * read by clock, the run handed off from payment back to room booking and stood accused of
+     * INVALID_TRANSITION. An outcome with no declared cause is therefore read as caused by
+     * its step's start -- only when exactly one start of that step is in hand, since with
+     * several attempts the specification does not say which one this outcome answers.
      */
     private static final class Causality {
         private final java.util.Map<String, SagaEvent> byId = new java.util.HashMap<>();
         private final java.util.Map<SagaEvent, Instant> at = new java.util.IdentityHashMap<>();
         private final java.util.Map<SagaEvent, Integer> depth = new java.util.IdentityHashMap<>();
+        private final java.util.Map<SagaEvent, SagaEvent> stepStart = new java.util.IdentityHashMap<>();
 
-        Causality(List<SagaEvent> events) {
+        Causality(WorkflowSpec spec, List<SagaEvent> events) {
             for (SagaEvent e : events) {
                 if (e.getEventId() != null) byId.putIfAbsent(e.getEventId(), e);
+            }
+            if (spec != null) {
+                java.util.Map<String, List<SagaEvent>> startsByStep = new java.util.HashMap<>();
+                for (SagaEvent e : events) {
+                    spec.classifyEvent(e.getEventType())
+                            .filter(role -> role.role() == EventRole.Role.STARTED)
+                            .ifPresent(role -> startsByStep.computeIfAbsent(role.stepId(), k -> new ArrayList<>()).add(e));
+                }
+                for (SagaEvent e : events) {
+                    spec.classifyEvent(e.getEventType())
+                            .filter(role -> role.role() == EventRole.Role.COMPLETED || role.role() == EventRole.Role.FAILED)
+                            .map(role -> startsByStep.getOrDefault(role.stepId(), List.of()))
+                            .filter(starts -> starts.size() == 1 && starts.get(0) != e)
+                            .ifPresent(starts -> stepStart.put(e, starts.get(0)));
+                }
             }
             for (SagaEvent e : events) resolve(e, new java.util.HashSet<>());
         }
 
         private SagaEvent causeOf(SagaEvent e) {
             String id = e.getCausationId();
-            if (id == null || id.equals(e.getEventId())) return null;
-            return byId.get(id);
+            if (id != null && !id.equals(e.getEventId())) {
+                SagaEvent declared = byId.get(id);
+                if (declared != null) return declared;
+            }
+            return stepStart.get(e);
         }
 
         private void resolve(SagaEvent e, Set<SagaEvent> visiting) {
@@ -193,7 +220,7 @@ public final class EvidenceTimeline {
      */
     public static EvidenceTimeline of(WorkflowSpec spec, List<SagaEvent> events) {
         List<SagaEvent> given = events == null ? List.of() : events;
-        Causality causality = new Causality(given);
+        Causality causality = new Causality(spec, given);
         if (spec == null) {
             // A run with no specification has no derivable status. IN_PROGRESS here is not
             // a reading of its evidence; it says only that the run exists and that nothing
