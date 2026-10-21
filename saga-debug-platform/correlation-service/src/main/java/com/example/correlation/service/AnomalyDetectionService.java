@@ -813,35 +813,36 @@ public class AnomalyDetectionService {
      * <p>Silence is measured on the platform's clock, which is right for a source that has
      * gone quiet and wrong for an observer that is behind: under backlog the next event sits
      * unread in Kafka while the run is reported stuck (bench 1000 ev/s: 39 standing on runs
-     * that completed within a second). Once that event arrives the evidence settles it: if
-     * the event following the cited one in business order happened, by the source's own
-     * stamps, within the awaited step's timeout, the run did not stall -- the reading did.
-     * A duration between two events of one run is what the source clock is right for.
-     * A real stall (paused service, R06) shows the gap in the source stamps too and stays.
+     * that completed within a second). Only an observation read after the finding was made
+     * can settle it, and it does by the source's own stamps: if the earliest-stamped of those
+     * happened within the awaited step's timeout of the latest-stamped one the finding had in
+     * hand, the source never went quiet -- the reading did. A duration between two events of
+     * one run is what the source clock is right for. A real stall (stopped or paused service,
+     * R06/R25) shows the gap in the source stamps too and stays. Events read before the
+     * finding prove nothing about the silence that followed them (FTGO kitchen-stop: a
+     * neighbour already in hand withdrew a real 64 s stall).
      */
     public void withdrawDisprovenSilence(WorkflowSpec workflow, String sagaId, List<SagaEvent> inOrder) {
         if (!anomalyRepository.existsBySagaIdAndAnomalyType(sagaId, AnomalyType.SAGA_STUCK)) return;
         Instant now = Instant.now();
         for (Anomaly anomaly : anomalyRepository.findStandingBySagaId(sagaId)) {
             if (anomaly.getAnomalyType() != AnomalyType.SAGA_STUCK) continue;
-            List<String> cited = anomaly.getEvidenceEventIds();
-            if (cited == null || cited.isEmpty()) continue;
-            int at = -1;
-            for (int i = 0; i < inOrder.size(); i++) {
-                if (cited.get(0).equals(inOrder.get(i).getEventId())) { at = i; break; }
-            }
-            if (at < 0 || at == inOrder.size() - 1) continue;
-            SagaEvent last = inOrder.get(at);
-            SagaEvent next = inOrder.get(at + 1);
-            int timeout = silenceTimeoutSeconds(workflow, awaitedSteps(workflow, inOrder.subList(0, at + 1)));
-            if (Duration.between(last.getTimestamp(), next.getTimestamp()).getSeconds() > timeout) continue;
+            Instant raisedAt = anomaly.getDetectedAt();
+            List<SagaEvent> inHand = inOrder.stream()
+                    .filter(e -> lastHeardAt(e).isBefore(raisedAt)).toList();
+            SagaEvent lastInHand = inHand.stream().max(Comparator.comparing(SagaEvent::getTimestamp)).orElse(null);
+            SagaEvent firstLate = inOrder.stream().filter(e -> !lastHeardAt(e).isBefore(raisedAt))
+                    .min(Comparator.comparing(SagaEvent::getTimestamp)).orElse(null);
+            if (lastInHand == null || firstLate == null) continue;
+            int timeout = silenceTimeoutSeconds(workflow, awaitedSteps(workflow, inHand));
+            if (Duration.between(lastInHand.getTimestamp(), firstLate.getTimestamp()).getSeconds() > timeout) continue;
             anomaly.setRetractedAt(now);
-            anomaly.setRetractionReason(String.format("%s followed %s within %ds by the source's "
-                    + "stamps; the silence was the observer reading late", next.getEventType(),
-                    last.getEventType(), timeout));
+            anomaly.setRetractionReason(String.format("%s, read after this finding, happened within %ds "
+                    + "of %s by the source's stamps; the silence was the observer reading late",
+                    firstLate.getEventType(), timeout, lastInHand.getEventType()));
             anomalyRepository.save(anomaly);
             log.info("Withdrew SAGA_STUCK against execution {}: {} arrived late but happened in time",
-                    sagaId, next.getEventType());
+                    sagaId, firstLate.getEventType());
         }
     }
 

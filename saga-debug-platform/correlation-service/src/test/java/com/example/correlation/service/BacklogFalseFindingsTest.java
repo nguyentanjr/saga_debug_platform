@@ -48,6 +48,25 @@ class BacklogFalseFindingsTest {
         assertThat(standing(p)).contains(AnomalyType.SAGA_STUCK);
     }
 
+    /**
+     * FTGO kitchen-stop (6879a58): VALIDATE_REQUESTED read 20 ms after TICKET_CREATE_REQUESTED
+     * though stamped before it, then 64 s of real silence. The neighbour already in hand
+     * withdrew the finding; only what is read after it may.
+     */
+    @Test
+    void stuckStandsWhenOnlyEventsReadBeforeItAreClose() {
+        ReplayPipeline p = new ReplayPipeline();
+        Instant t0 = Instant.now().minusSeconds(120);
+        deliver(p, "e1", "ORDER_CREATED", t0, t0);
+        deliver(p, "e3", "INVENTORY_STARTED", t0.plusMillis(60), t0.plusMillis(500));
+        deliver(p, "e2", "PAYMENT_COMPLETED", t0.plusMillis(2), t0.plusMillis(520));
+        p.detector.detectStuckSagas();
+
+        deliver(p, "e4", "INVENTORY_RESERVED", t0.plusSeconds(64), Instant.now());
+
+        assertThat(standing(p)).contains(AnomalyType.SAGA_STUCK);
+    }
+
     @Test
     void stuckPassSkipsARunThatEndedAfterTheRunListWasRead() {
         ReplayPipeline p = new ReplayPipeline();
