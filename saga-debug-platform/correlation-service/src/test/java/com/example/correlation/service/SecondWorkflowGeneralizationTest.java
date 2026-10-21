@@ -90,6 +90,9 @@ class SecondWorkflowGeneralizationTest {
         when(sagaInstanceRepository.findById(anyString()))
                 .thenAnswer(inv -> saved.isEmpty()
                         ? Optional.empty() : Optional.of(copyOf(saved.get(saved.size() - 1))));
+        when(sagaInstanceRepository.findByIdForUpdate(anyString()))
+                .thenAnswer(inv -> saved.isEmpty()
+                        ? Optional.empty() : Optional.of(copyOf(saved.get(saved.size() - 1))));
         when(sagaInstanceRepository.save(any(SagaInstance.class))).thenAnswer(inv -> {
             SagaInstance saga = inv.getArgument(0);
             saved.add(copyOf(saga));

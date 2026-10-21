@@ -103,6 +103,8 @@ class OutOfOrderStatusTest {
         SagaInstanceRepository sagaInstanceRepository = mock(SagaInstanceRepository.class);
         when(sagaInstanceRepository.findById(anyString()))
                 .thenAnswer(call -> Optional.ofNullable(instances.get(call.getArgument(0))));
+        when(sagaInstanceRepository.findByIdForUpdate(anyString()))
+                .thenAnswer(call -> Optional.ofNullable(instances.get(call.getArgument(0))));
         when(sagaInstanceRepository.save(any(SagaInstance.class))).thenAnswer(call -> {
             SagaInstance instance = call.getArgument(0);
             instances.put(instance.getSagaId(), instance);

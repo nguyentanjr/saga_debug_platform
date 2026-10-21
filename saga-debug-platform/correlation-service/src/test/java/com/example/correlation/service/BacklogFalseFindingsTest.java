@@ -8,6 +8,8 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -110,6 +112,17 @@ class BacklogFalseFindingsTest {
         deliver(p, "e4", "REFUND_PAYMENT", t0.plusMillis(1500), Instant.now());
 
         assertThat(standing(p)).doesNotContain(AnomalyType.COMPENSATION_MISSING);
+    }
+
+    /** Ingest holds the run the way RCA does; see IngestRcaLockTest for why. */
+    @Test
+    void ingestLocksTheRunItUpdates() {
+        ReplayPipeline p = new ReplayPipeline();
+        Instant t0 = Instant.now();
+        deliver(p, "e1", "ORDER_CREATED", t0, t0);
+        deliver(p, "e2", "PAYMENT_COMPLETED", t0.plusMillis(500), t0.plusMillis(500));
+
+        verify(p.sagas, atLeastOnce()).findByIdForUpdate(RUN.canonical());
     }
 
     private static List<AnomalyType> standing(ReplayPipeline p) {
