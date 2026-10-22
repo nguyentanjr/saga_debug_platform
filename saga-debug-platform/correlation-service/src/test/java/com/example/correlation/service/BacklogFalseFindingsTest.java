@@ -148,6 +148,40 @@ class BacklogFalseFindingsTest {
         assertThat(result.getCreatedAt()).isBeforeOrEqualTo(readAt.get());
     }
 
+    /**
+     * EXT-RCA-STALE-RACE: the analysis read ORPHAN_EVENT standing, the withdrawal committed
+     * after that read but carries an earlier stamp. No stamp comparison sees it; the cited
+     * finding being withdrawn does.
+     */
+    @Test
+    void aDiagnosisCitingAWithdrawnFindingIsRedone() {
+        ReplayPipeline p = new ReplayPipeline();
+        Instant t0 = Instant.now().minusSeconds(60);
+        deliver(p, "e2", "PAYMENT_COMPLETED", t0.plusMillis(500), t0);
+        List<com.example.correlation.domain.RcaResult> results = new java.util.ArrayList<>();
+        when(p.rcaRepo.save(any())).thenAnswer(c -> { results.add(0, c.getArgument(0)); return c.getArgument(0); });
+        when(p.rcaRepo.findBySagaIdOrderByCreatedAtDesc(anyString())).thenAnswer(c -> List.copyOf(results));
+        when(p.anomalyRepo.findAllById(any())).thenAnswer(c -> {
+            java.util.Set<Long> ids = new java.util.HashSet<>();
+            ((Iterable<Long>) c.getArgument(0)).forEach(ids::add);
+            return p.anomalies.stream().filter(a -> ids.contains(a.getId())).toList();
+        });
+        when(p.anomalyRepo.findSagaIdsWithAnomaliesSince(any())).thenReturn(List.of(RUN.canonical()));
+        // The sweep reaches analyze through the Spring proxy; the harness has none.
+        org.springframework.test.util.ReflectionTestUtils.setField(p.rca, "self", p.rca);
+
+        com.example.correlation.domain.RcaResult first = p.rca.analyze(RUN.canonical());
+        assertThat(first.getPrimaryRootCauses()).contains("WRONG_SAGA_CORRELATION_KEY");
+        Anomaly orphan = p.anomalies.stream().filter(a -> a.getAnomalyType() == AnomalyType.ORPHAN_EVENT).findFirst().orElseThrow();
+        orphan.setRetractedAt(first.getCreatedAt().minusMillis(50));
+        when(p.anomalyRepo.findLatestDetectedAtBySagaId(anyString())).thenReturn(orphan.getRetractedAt());
+
+        p.rca.autoAnalyzeNewlyDetectedAnomalies();
+
+        assertThat(results).hasSize(2);
+        assertThat(results.get(0).getPrimaryRootCauses()).doesNotContain("WRONG_SAGA_CORRELATION_KEY");
+    }
+
     private static List<AnomalyType> standing(ReplayPipeline p) {
         return p.anomalies.stream().filter(a -> a.getRetractedAt() == null).map(Anomaly::getAnomalyType).toList();
     }

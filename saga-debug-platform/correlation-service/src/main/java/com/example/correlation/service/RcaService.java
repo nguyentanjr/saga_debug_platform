@@ -447,12 +447,33 @@ public class RcaService {
             List<RcaResult> existing = rcaResultRepository.findBySagaIdOrderByCreatedAtDesc(sagaId);
             boolean needsAnalysis = existing.isEmpty()
                     || existing.get(0).getCreatedAt() == null
-                    || existing.get(0).getCreatedAt().isBefore(latestAnomalyAt);
+                    || existing.get(0).getCreatedAt().isBefore(latestAnomalyAt)
+                    || citesWithdrawnFinding(existing.get(0));
 
             if (needsAnalysis) {
                 analyzeInOwnTransaction(sagaId);
             }
         }
+    }
+
+    /**
+     * EXT-RCA-STALE-RACE: whether a diagnosis rests on a finding that has since been withdrawn.
+     *
+     * <p>Comparing stamps cannot settle this: an analysis that read a finding just before the
+     * ingest withdrawing it committed carries a stamp later than the withdrawal, and was never
+     * looked at again (2 of 67 499 runs kept WRONG_SAGA_CORRELATION_KEY after a 2000 ev/s
+     * backlog drained). The diagnosis records which findings each candidate cited, so ask that
+     * directly: a cited finding no longer standing means the diagnosis is of evidence that no
+     * longer holds.
+     */
+    private boolean citesWithdrawnFinding(RcaResult result) {
+        Set<Long> cited = result.getCandidates().stream()
+                .flatMap(candidate -> candidate.getEvidence().stream())
+                .map(com.example.correlation.domain.rca.Evidence::anomalyId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (cited.isEmpty()) return false;
+        return anomalyRepository.findAllById(cited).stream().anyMatch(a -> a.getRetractedAt() != null);
     }
 
     /**
