@@ -761,6 +761,12 @@ public class AnomalyDetectionService {
                     : "workflow:" + String.join("|", awaited) + ".timeout";
 
             Instant lastHeardAt = lastHeardAt(lastEvent);
+            // EXT-STUCK-CITES-ARRIVAL: the clock starts at the latest arrival, but the finding is
+            // about where the run stopped, so it cites the latest observation the workflow places
+            // in business order -- the one the awaited step follows. Citing the latest arrival
+            // pinned FTGO accounting-pause on CREATE_TICKET, whose command was merely read a
+            // second after AUTHORIZE_REQUESTED although it happened before it.
+            SagaEvent cited = lastPlaced(workflow, inOrder).orElse(lastEvent);
             if (lastHeardAt.plus(timeoutSeconds, ChronoUnit.SECONDS).isBefore(now)) {
                 boolean alreadyDetected = anomalyRepository.findStandingBySagaId(saga.getSagaId())
                         .stream()
@@ -770,14 +776,14 @@ public class AnomalyDetectionService {
                     createAnomaly(saga.getSagaId(), AnomalyType.SAGA_STUCK,
                             String.format("Saga stuck: nothing heard since %s (last: %s, "
                                             + "stamped %s, timeout: %ds)",
-                                    lastHeardAt, lastEvent.getEventType(),
-                                    lastEvent.getTimestamp(), timeoutSeconds),
+                                    lastHeardAt, cited.getEventType(),
+                                    cited.getTimestamp(), timeoutSeconds),
                             details()
                                     .observedValue(String.format("nothing heard since %s, after %s",
-                                            lastHeardAt, lastEvent.getEventType()))
+                                            lastHeardAt, cited.getEventType()))
                                     .expectedValue(String.format("next event within %ds", timeoutSeconds))
                                     .thresholdSource(timeoutSource)
-                                    .evidenceEvents(lastEvent)
+                                    .evidenceEvents(cited)
                                     .measuredAt(now));
                 }
             }
@@ -791,15 +797,22 @@ public class AnomalyDetectionService {
      * to that observation's own step when its outcome leads to no further step.
      */
     private List<String> awaitedSteps(WorkflowSpec workflow, List<SagaEvent> inOrder) {
-        if (workflow == null) return List.of();
-        for (int i = inOrder.size() - 1; i >= 0; i--) {
-            String type = inOrder.get(i).getEventType();
-            String step = workflow.getExpectedStepForEvent(type);
-            if (step == null) continue;
+        return lastPlaced(workflow, inOrder).map(event -> {
+            String type = event.getEventType();
             List<String> next = workflow.stepsAwaitedAfter(type);
-            return next.isEmpty() ? List.of(step) : next;
+            return next.isEmpty() ? List.of(workflow.getExpectedStepForEvent(type)) : next;
+        }).orElse(List.of());
+    }
+
+    /** The latest observation, in business order, that the workflow places at a step. */
+    private static Optional<SagaEvent> lastPlaced(WorkflowSpec workflow, List<SagaEvent> inOrder) {
+        if (workflow == null) return Optional.empty();
+        for (int i = inOrder.size() - 1; i >= 0; i--) {
+            if (workflow.getExpectedStepForEvent(inOrder.get(i).getEventType()) != null) {
+                return Optional.of(inOrder.get(i));
+            }
         }
-        return List.of();
+        return Optional.empty();
     }
 
     private int silenceTimeoutSeconds(WorkflowSpec workflow, List<String> awaited) {

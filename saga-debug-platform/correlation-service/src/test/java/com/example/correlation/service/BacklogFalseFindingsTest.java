@@ -117,6 +117,25 @@ class BacklogFalseFindingsTest {
         assertThat(standing(p)).doesNotContain(AnomalyType.SAGA_STUCK);
     }
 
+    /**
+     * EXT-STUCK-CITES-ARRIVAL: silence runs from the latest arrival, but the finding names where
+     * the run stopped. FTGO accounting-pause: the earlier command was read a second after the
+     * later one, and the dashboard marked CREATE_TICKET instead of AUTHORIZE_CARD.
+     */
+    @Test
+    void stuckCitesTheLatestStepNotTheLatestArrival() {
+        ReplayPipeline p = new ReplayPipeline();
+        Instant t0 = Instant.now().minusSeconds(120);
+        deliver(p, "e2", "PAYMENT_COMPLETED", t0.plusMillis(500), t0);
+        deliver(p, "e1", "ORDER_CREATED", t0, t0.plusSeconds(1));
+
+        p.detector.detectStuckSagas();
+
+        assertThat(p.anomalies).filteredOn(a -> a.getAnomalyType() == AnomalyType.SAGA_STUCK)
+                .singleElement()
+                .satisfies(a -> assertThat(a.getEvidenceEventIds()).containsExactly("e2"));
+    }
+
     @Test
     void compensationMissingWithdrawnWhenTheStartArrivesLate() {
         ReplayPipeline p = new ReplayPipeline();
