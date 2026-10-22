@@ -18,6 +18,9 @@ Moi bac do:
   anomalies    bat thuong observer ghi cho saga cua bac nay (moi saga deu binh thuong,
                nen moi bat thuong la bao dong gia do tai)
   cpu / mem    docker stats cua observer va postgres (trung binh / dinh)
+  verdicts     sau khi hang doi phan tich lai chay het: ket luan cuoi cua moi saga so voi nhan
+               dung theo cach sinh (co INVENTORY_FAILED -> COMPENSATED + FORWARD_STEP_FAILURE,
+               khong -> COMPLETED + khong can chan doan)
 
 Chay (sau khi compose da len va observer UP):
   python benchmark/load_observer.py --rates 100,500,1000,2000,5000 --duration 60
@@ -269,6 +272,54 @@ def db_metrics(step_id, t0, t_end, clock):
             "anomalies": anomalies, "anomalies_standing": standing, "db_size_mib": round(size / 2**20, 1)}
 
 
+AWAITING = """SELECT count(*) FROM saga_instances s
+    WHERE s.status IN ('COMPLETED','COMPENSATED','FAILED')
+      AND EXISTS (SELECT 1 FROM anomalies a WHERE a.saga_id = s.saga_id)
+      AND NOT EXISTS (SELECT 1 FROM rca_results r WHERE r.saga_id = s.saga_id
+          AND r.created_at >= (SELECT max(e.received_at) FROM saga_events e WHERE e.saga_id = s.saga_id))"""
+
+
+def converge(timeout):
+    """Cho hang doi phan tich lai (sweep 30 s) chay het; tra ve so giay cho, None neu het gio."""
+    t = time.time()
+    with psycopg2.connect(**PG) as c, c.cursor() as cur:
+        while time.time() - t < timeout:
+            cur.execute(AWAITING)
+            if cur.fetchone()[0] == 0:
+                return round(time.time() - t, 1)
+            time.sleep(15)
+    return None
+
+
+def verdicts(step_id):
+    """Ket luan cuoi cua moi saga cua bac, doi chieu nhan dung theo cach sinh."""
+    with psycopg2.connect(**PG) as c, c.cursor() as cur:
+        cur.execute("""
+            WITH lab AS (SELECT saga_id, bool_or(event_type = 'INVENTORY_FAILED') AS comp
+                         FROM saga_events WHERE payload->>'benchStep' = %s GROUP BY saga_id),
+                 latest AS (SELECT DISTINCT ON (saga_id) saga_id, rca_status, primary_root_causes
+                            FROM rca_results ORDER BY saga_id, created_at DESC)
+            SELECT lab.comp, s.status, coalesce(l.rca_status, 'NONE'),
+                   coalesce(l.primary_root_causes::text, '[]')
+            FROM lab JOIN saga_instances s USING (saga_id) LEFT JOIN latest l USING (saga_id)""",
+                    (step_id,))
+        rows = cur.fetchall()
+    out = {"sagas": len(rows), "status_ok": 0, "verdict_ok": 0, "wrong": {}}
+    for comp, status, rca, causes in rows:
+        if comp:
+            s_ok = status == "COMPENSATED"
+            v_ok = rca == "EVIDENCE_AVAILABLE" and json.loads(causes) == ["FORWARD_STEP_FAILURE"]
+        else:
+            s_ok = status == "COMPLETED"
+            v_ok = rca in ("NONE", "NO_DIAGNOSIS_NEEDED")
+        out["status_ok"] += s_ok
+        out["verdict_ok"] += v_ok
+        if not (s_ok and v_ok):
+            key = f"{'COMPENSATE' if comp else 'HAPPY'}->{status}/{rca}/{causes}"
+            out["wrong"][key] = out["wrong"].get(key, 0) + 1
+    return out
+
+
 def _r(x):
     return round(x, 1) if x is not None else None
 
@@ -281,6 +332,8 @@ def main():
     ap.add_argument("--drain-timeout", type=int, default=600)
     ap.add_argument("--settle", type=int, default=40,
                     help="cho them sau drain de detector theo lich (15s) quet xong")
+    ap.add_argument("--converge-timeout", type=int, default=1800,
+                    help="cho toi da bao lau de hang doi phan tich lai chay het truoc khi cham nhan")
     ap.add_argument("--out", default=None)
     ap.add_argument("--label", default="")
     a = ap.parse_args()
@@ -313,7 +366,7 @@ def main():
         stats.stop.set()
         stats.join()
         time.sleep(a.settle)
-        row = {"target_eps": rate, "offered_eps": res["offered_eps"], "sent": res["sent"],
+        row = {"step_id": step_id, "target_eps": rate, "offered_eps": res["offered_eps"], "sent": res["sent"],
                "sagas": res["sagas"], "lag_end": lag_end, "drain_s": drain_s,
                "lag_after_drain_timeout": lag_left,
                "max_lag": max((l for _, l in res["lag_samples"]), default=0),
@@ -325,6 +378,10 @@ def main():
         print(json.dumps({k: v for k, v in row.items() if k != "lag_samples"}, ensure_ascii=False),
               flush=True)
 
+    report["converge_s"] = converge(a.converge_timeout)
+    for row in report["steps"]:
+        row["verdicts"] = verdicts(row["step_id"])
+        print(json.dumps({"target_eps": row["target_eps"], "verdicts": row["verdicts"]}), flush=True)
     report["clock_sync"] = clock.summary()
     out = a.out or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "results", f"benchmark_observer_{run_id}.json")
