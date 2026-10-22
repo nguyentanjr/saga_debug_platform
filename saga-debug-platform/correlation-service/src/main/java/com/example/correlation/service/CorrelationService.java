@@ -259,6 +259,10 @@ public class CorrelationService {
             // a handoff. Judging it here filed the same event twice under two claims, and RCA
             // ranked the routing reading first (SC13, SC21).
             if (timeline.isAfterEnding(current)) continue;
+            // A forward reply read while compensation was open is not the run moving on, so
+            // it neither starts nor ends a handoff (ShopSaga customer-cancel).
+            if (timeline.isSupersededByCompensation(current)
+                    || timeline.isSupersededByCompensation(previous)) continue;
 
             String previousStepName = workflow.getExpectedStepForEvent(previous.getEventType());
             String currentStepName = workflow.getExpectedStepForEvent(current.getEventType());

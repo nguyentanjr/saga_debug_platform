@@ -111,6 +111,11 @@ class SagaShapeMatrixTest {
         if (!o.sagaStatus.equals(run.expected()) || !falseFindings.isEmpty()) {
             return "status=" + o.sagaStatus + " expected=" + run.expected() + " false=" + falseFindings;
         }
+        // A run undone without any step reporting failure: no step failure may be diagnosed.
+        boolean noStepFailed = run.events().stream().noneMatch(e -> e.type().endsWith("_FAIL"));
+        if (noStepFailed && o.candidateRules.stream().anyMatch(r -> r.startsWith("R11:"))) {
+            return "diagnosed FORWARD_STEP_FAILURE with no step failure observed";
+        }
         return null;
     }
 
@@ -242,13 +247,27 @@ class SagaShapeMatrixTest {
             late.emit(failing + "_REQ");
             List<Ev> before = new ArrayList<>(late.events);
             compensate(late, cancelUndo, mode);
-            int firstCompensation = before.size();
-            // The reply is stamped right after the first compensation request.
-            Ev reply = new Ev("e-late", failing + "_DONE",
-                    late.events.get(firstCompensation).at().plusMillis(500));
-            List<Ev> withReply = new ArrayList<>(late.events);
-            withReply.add(firstCompensation + 1, reply);
-            runs.add(new Run("lateReply@" + failing, withReply, "COMPENSATED"));
+            // The reply lands after each compensation observation in turn, while one is still
+            // open: after a request, and after one branch finished (ShopSaga customer-cancel).
+            for (int at = before.size(); at < late.events.size() - 1; at++) {
+                Ev reply = new Ev("e-late", failing + "_DONE", late.events.get(at).at().plusMillis(500));
+                List<Ev> withReply = new ArrayList<>(late.events);
+                withReply.add(at + 1, reply);
+                runs.add(new Run("lateReply@" + failing + "+" + (at - before.size()), withReply, "COMPENSATED"));
+            }
+
+            // The source re-sends the in-flight step's compensation before it finished, and the
+            // retry is answered again (ShopSaga payment-stop: one refund row, two replies).
+            if (compensable(compensation, failing)) {
+                String undo = "C" + failing;
+                List<Ev> retried = new ArrayList<>(cancel.events);
+                int doneAt = 0;
+                while (!retried.get(doneAt).type().equals(undo + "_DONE")) doneAt++;
+                Ev answered = retried.get(doneAt);
+                retried.add(doneAt, new Ev("e-retry", undo + "_REQ", answered.at().minusMillis(500)));
+                retried.add(doneAt + 2, new Ev("e-reack", undo + "_DONE", answered.at().plusMillis(200)));
+                runs.add(new Run("retriedUndo@" + failing, retried, "COMPENSATED"));
+            }
         }
         return runs;
     }

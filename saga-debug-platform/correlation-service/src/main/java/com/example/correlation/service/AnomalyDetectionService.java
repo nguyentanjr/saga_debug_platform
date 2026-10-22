@@ -493,14 +493,24 @@ public class AnomalyDetectionService {
 
     public void detectDuplicateCompensation(WorkflowSpec workflow, String sagaId, List<SagaEvent> events) {
         if (workflow == null) return;
-        // Counted per compensation step: two branches undone at once are two compensations,
-        // each started once, not one compensation started twice (ShopSaga, 2026-10-22).
+        // Per compensation step, and only a start after that step already completed: two
+        // branches undone at once are two compensations, and a request re-sent while its
+        // compensation is still open is a retry (ShopSaga, 2026-10-22). Undoing again what
+        // was already undone is the duplicate. Events are in business order.
         Map<String, List<SagaEvent>> startsByStep = new LinkedHashMap<>();
-        compensationEvents(workflow, events, WorkflowSpec.EventRole.Role.STARTED).forEach(e ->
-                workflow.classifyEvent(e.getEventType()).ifPresent(role ->
-                        startsByStep.computeIfAbsent(role.stepId(), k -> new ArrayList<>()).add(e)));
-        List<SagaEvent> compStartEvents = startsByStep.values().stream()
-                .filter(starts -> starts.size() > 1).findFirst().orElse(List.of());
+        Set<String> completed = new HashSet<>();
+        List<SagaEvent> compStartEvents = List.of();
+        for (SagaEvent e : events) {
+            Optional<WorkflowSpec.EventRole> role = workflow.classifyEvent(e.getEventType())
+                    .filter(r -> workflow.isCompensationStep(r.stepId()));
+            if (role.isEmpty()) continue;
+            String step = role.get().stepId();
+            if (role.get().role() == WorkflowSpec.EventRole.Role.COMPLETED) completed.add(step);
+            if (role.get().role() != WorkflowSpec.EventRole.Role.STARTED) continue;
+            List<SagaEvent> starts = startsByStep.computeIfAbsent(step, k -> new ArrayList<>());
+            starts.add(e);
+            if (completed.contains(step) && compStartEvents.isEmpty()) compStartEvents = List.copyOf(starts);
+        }
         long startCount = compStartEvents.size();
         if (startCount > 1 && !anomalyRepository.existsBySagaIdAndAnomalyType(
                 sagaId, AnomalyType.DUPLICATE_COMPENSATION)) {

@@ -72,6 +72,8 @@ public final class EvidenceTimeline {
     private final List<SagaEvent> contested;
     private final Regression regression;
     private final Causality causality;
+    /** Forward outcomes read while compensation was open: not the run's outcome, nor a handoff. */
+    private final Set<SagaEvent> superseded;
 
     /**
      * An observation that provably followed an ending and reported something lower.
@@ -110,8 +112,9 @@ public final class EvidenceTimeline {
 
     private EvidenceTimeline(WorkflowSpec spec, List<SagaEvent> ordered, List<Bearing> bearings,
             SagaStatus status, SagaEvent decidingEvent, List<SagaEvent> contested,
-            Regression regression, Causality causality) {
+            Regression regression, Causality causality, Set<SagaEvent> superseded) {
         this.causality = causality;
+        this.superseded = superseded;
         this.spec = spec;
         this.ordered = ordered;
         this.bearings = bearings;
@@ -227,18 +230,19 @@ public final class EvidenceTimeline {
             // has been able to judge it.
             return new EvidenceTimeline(null, List.copyOf(given), List.of(),
                     given.isEmpty() ? SagaStatus.STARTED : SagaStatus.IN_PROGRESS,
-                    null, List.of(), null, causality);
+                    null, List.of(), null, causality, Set.of());
         }
 
         List<SagaEvent> ordered = new ArrayList<>(given);
         ordered.sort(businessOrder(spec, causality));
 
-        List<Bearing> bearings = bearingsOf(spec, ordered);
+        Set<SagaEvent> superseded = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        List<Bearing> bearings = bearingsOf(spec, ordered, superseded);
 
         if (bearings.isEmpty()) {
             return new EvidenceTimeline(spec, List.copyOf(ordered), List.of(),
                     ordered.isEmpty() ? SagaStatus.STARTED : SagaStatus.IN_PROGRESS,
-                    null, List.of(), null, causality);
+                    null, List.of(), null, causality, superseded);
         }
 
         // The run's status is what the last status-bearing observation says — but "last"
@@ -274,7 +278,7 @@ public final class EvidenceTimeline {
         }
 
         return new EvidenceTimeline(spec, List.copyOf(ordered), List.copyOf(bearings),
-                status, deciding, contestedEvents, firstRegression(spec, causality, bearings), causality);
+                status, deciding, contestedEvents, firstRegression(spec, causality, bearings), causality, superseded);
     }
 
     /**
@@ -449,7 +453,7 @@ public final class EvidenceTimeline {
      *       ended it is read as before: work after the ending.</li>
      * </ul>
      */
-    private static List<Bearing> bearingsOf(WorkflowSpec spec, List<SagaEvent> ordered) {
+    private static List<Bearing> bearingsOf(WorkflowSpec spec, List<SagaEvent> ordered, Set<SagaEvent> superseded) {
         Set<String> compensationsStarted = new LinkedHashSet<>();
         Set<String> compensationsDone = new LinkedHashSet<>();
         Set<String> owed = new LinkedHashSet<>();
@@ -477,8 +481,7 @@ public final class EvidenceTimeline {
                 // Only while compensation is open. After the run has ended, a forward outcome
                 // is work done after the ending, and stays the contradiction it is (C4).
                 boolean ended = !bearings.isEmpty() && bearings.get(bearings.size() - 1).status().isTerminal();
-                if (compensating && !ended) continue;
-                if (alone.orElse(null) == SagaStatus.COMPENSATING) compensating = true;
+                if (compensating && !ended) { superseded.add(event); continue; }
             }
             alone.ifPresent(status -> bearings.add(new Bearing(event, status)));
         }
@@ -490,6 +493,10 @@ public final class EvidenceTimeline {
      * ({@link #bearingsOf}): a forward reply after compensation began, or one branch's
      * compensation finishing while another is open, is not one.
      */
+    public boolean isSupersededByCompensation(SagaEvent event) {
+        return superseded.contains(event);
+    }
+
     public List<SagaEvent> endingsAs(SagaStatus terminal) {
         return bearings.stream().filter(b -> b.status() == terminal).map(Bearing::event).toList();
     }
@@ -608,6 +615,31 @@ public final class EvidenceTimeline {
         return partitionDash <= 0 ? null : transportRef.substring(0, partitionDash);
     }
 
+    /**
+     * A compensation's completion repeated in answer to a request the source sent again.
+     *
+     * <p>ShopSaga (payment-stop, 2026-10-22) re-sent the refund while payment-service was down
+     * and payment answered both: two PAYMENT_REFUNDED, one refund row. A repeat of the ending's
+     * own compensation step is an acknowledgement while that step has no more completions than
+     * starts; one beyond that is work no request asked for, and stays a finding.
+     */
+    private boolean answersRetriedRequest(SagaEvent ending, SagaEvent late) {
+        Optional<EventRole> endRole = spec.classifyEvent(ending.getEventType());
+        Optional<EventRole> lateRole = spec.classifyEvent(late.getEventType());
+        if (endRole.isEmpty() || lateRole.isEmpty()) return false;
+        String step = endRole.get().stepId();
+        if (!spec.isCompensationStep(step) || !step.equals(lateRole.get().stepId())
+                || lateRole.get().role() != EventRole.Role.COMPLETED) return false;
+        long starts = 0, completions = 0;
+        for (SagaEvent e : ordered) {
+            Optional<EventRole> r = spec.classifyEvent(e.getEventType());
+            if (r.isEmpty() || !step.equals(r.get().stepId())) continue;
+            if (r.get().role() == EventRole.Role.STARTED) starts++;
+            if (r.get().role() == EventRole.Role.COMPLETED) completions++;
+        }
+        return completions <= starts;
+    }
+
     public Optional<PostTerminal> postTerminal() {
         // EXT-UNMAPPED-POST-TERMINAL: only an observation the workflow can place says the run
         // did something after it ended. One it cannot place has no meaning here -- ewallet's
@@ -619,6 +651,7 @@ public final class EvidenceTimeline {
                 .flatMap(ended -> ordered.stream()
                         .filter(late -> spec.classifyEvent(late.getEventType()).isPresent())
                         .filter(late -> !corroborates(ended.event(), late))
+                        .filter(late -> !answersRetriedRequest(ended.event(), late))
                         .filter(late -> relate(spec, causality, ended.event(), late) == Relation.BEFORE)
                         .findFirst()
                         .map(late -> new PostTerminal(ended.event(), ended.status(), late))

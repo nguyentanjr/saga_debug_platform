@@ -1087,13 +1087,18 @@ public class RcaService {
         List<SagaEvent> started = compensationEvents(workflow, events, WorkflowSpec.EventRole.Role.STARTED);
         List<SagaEvent> completed = compensationEvents(workflow, events, WorkflowSpec.EventRole.Role.COMPLETED);
 
-        if (saga.getStatus() == SagaStatus.COMPENSATED && !started.isEmpty() && !completed.isEmpty()) {
+        // A compensation is not evidence that a step failed: ShopSaga undoes an order the
+        // customer cancelled, and one whose payment overran, with no step reporting failure
+        // (2026-10-22). The claim needs the failure itself.
+        Optional<SagaEvent> forwardFailure = forwardFailures(workflow, events).stream().findFirst();
+        if (saga.getStatus() == SagaStatus.COMPENSATED && !started.isEmpty() && !completed.isEmpty()
+                && forwardFailure.isPresent()) {
             CandidateAssessment rr = candidate("FORWARD_STEP_FAILURE", "LOW", "R11",
                     CandidateStatus.STRONG_EVIDENCE);
             // The forward failure the compensation answered is this claim's subject, so it is
             // what the candidate is anchored at; unanchored, R11 ranked below every anchored
             // symptom of the rollback itself (SC24).
-            forwardFailures(workflow, events).stream().findFirst().ifPresent(failed ->
+            forwardFailure.ifPresent(failed ->
                     rr.getEvidence().add(Evidence.ofEvent(
                             failed.getEventType() + " is the forward step's declared failure",
                             null, "the step reports its declared completion event",
