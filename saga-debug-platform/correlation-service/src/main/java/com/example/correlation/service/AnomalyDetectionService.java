@@ -454,12 +454,25 @@ public class AnomalyDetectionService {
     public void detectMultiTerminalConflict(WorkflowSpec workflow, String sagaId, List<SagaEvent> events) {
         if (workflow == null) return;
 
-        List<SagaEvent> succeeded = terminalEvents(workflow, events, SagaStatus.COMPLETED);
-        List<SagaEvent> notSucceeded = new ArrayList<>(
-                terminalEvents(workflow, events, SagaStatus.FAILED));
-        notSucceeded.addAll(terminalEvents(workflow, events, SagaStatus.COMPENSATED));
+        // Endings read against every branch of the run: a forward reply that arrived after
+        // compensation began is not a second outcome (ShopSaga, a payment reply after cancel).
+        EvidenceTimeline timeline = EvidenceTimeline.of(workflow, events);
+        List<SagaEvent> succeeded = timeline.endingsAs(SagaStatus.COMPLETED);
+        List<SagaEvent> notSucceeded = new ArrayList<>(timeline.endingsAs(SagaStatus.FAILED));
+        notSucceeded.addAll(timeline.endingsAs(SagaStatus.COMPENSATED));
 
-        if (succeeded.isEmpty() || notSucceeded.isEmpty()) return;
+        if (succeeded.isEmpty() || notSucceeded.isEmpty()) {
+            // Raised on a prefix where a reply read as the run's completion, before the
+            // compensation that preceded it arrived: the whole evidence no longer has two
+            // outcomes, so the claim is withdrawn rather than left to the read order.
+            if (anomalyRepository.existsBySagaIdAndAnomalyType(sagaId, AnomalyType.MULTI_TERMINAL_CONFLICT)
+                    && anomalyRepository.retractClaims(sagaId, Set.of(AnomalyType.MULTI_TERMINAL_CONFLICT),
+                            Instant.now(), "read against every branch the run has one outcome; the other "
+                                    + "was a forward reply after compensation began") > 0) {
+                log.info("Withdrew MULTI_TERMINAL_CONFLICT against execution {}: one outcome", sagaId);
+            }
+            return;
+        }
 
         List<SagaEvent> terminalEvidence = new ArrayList<>(succeeded);
         terminalEvidence.addAll(notSucceeded);
@@ -478,21 +491,16 @@ public class AnomalyDetectionService {
                         .measuredAt(lastTimestamp(terminalEvidence)));
     }
 
-    /** Events whose lifecycle role puts the saga into the given terminal status. */
-    private List<SagaEvent> terminalEvents(WorkflowSpec workflow, List<SagaEvent> events,
-            SagaStatus terminal) {
-        return events.stream()
-                .filter(e -> workflow.classifyEvent(e.getEventType())
-                        .flatMap(workflow::statusAfter)
-                        .filter(status -> status == terminal)
-                        .isPresent())
-                .toList();
-    }
-
     public void detectDuplicateCompensation(WorkflowSpec workflow, String sagaId, List<SagaEvent> events) {
         if (workflow == null) return;
-        List<SagaEvent> compStartEvents = compensationEvents(
-                workflow, events, WorkflowSpec.EventRole.Role.STARTED);
+        // Counted per compensation step: two branches undone at once are two compensations,
+        // each started once, not one compensation started twice (ShopSaga, 2026-10-22).
+        Map<String, List<SagaEvent>> startsByStep = new LinkedHashMap<>();
+        compensationEvents(workflow, events, WorkflowSpec.EventRole.Role.STARTED).forEach(e ->
+                workflow.classifyEvent(e.getEventType()).ifPresent(role ->
+                        startsByStep.computeIfAbsent(role.stepId(), k -> new ArrayList<>()).add(e)));
+        List<SagaEvent> compStartEvents = startsByStep.values().stream()
+                .filter(starts -> starts.size() > 1).findFirst().orElse(List.of());
         long startCount = compStartEvents.size();
         if (startCount > 1 && !anomalyRepository.existsBySagaIdAndAnomalyType(
                 sagaId, AnomalyType.DUPLICATE_COMPENSATION)) {

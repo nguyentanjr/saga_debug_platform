@@ -21,6 +21,13 @@ public final class WorkflowSpecTestFixture {
         return load("workflows/order-saga-workflow.yaml");
     }
 
+    /** A registry holding exactly these specs, for tests outside this package. */
+    public static WorkflowRegistry registryOf(WorkflowSpec... specs) {
+        WorkflowRegistry registry = new WorkflowRegistry();
+        for (WorkflowSpec spec : specs) registry.register(spec, spec.getName() + ".yaml");
+        return registry;
+    }
+
     @SuppressWarnings("unchecked")
     public static WorkflowSpec load(String classpathResource) {
         ObjectMapper yamlMapper = new ObjectMapper(new YAMLFactory());

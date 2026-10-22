@@ -233,10 +233,7 @@ public final class EvidenceTimeline {
         List<SagaEvent> ordered = new ArrayList<>(given);
         ordered.sort(businessOrder(spec, causality));
 
-        List<Bearing> bearings = new ArrayList<>();
-        for (SagaEvent event : ordered) {
-            statusOf(spec, event).ifPresent(status -> bearings.add(new Bearing(event, status)));
-        }
+        List<Bearing> bearings = bearingsOf(spec, ordered);
 
         if (bearings.isEmpty()) {
             return new EvidenceTimeline(spec, List.copyOf(ordered), List.of(),
@@ -428,8 +425,73 @@ public final class EvidenceTimeline {
         };
     }
 
-    private static Optional<SagaStatus> statusOf(WorkflowSpec spec, SagaEvent event) {
-        return spec.classifyEvent(event.getEventType()).flatMap(spec::statusAfter);
+    /**
+     * What each observation says the run's status is, read against every branch of the run
+     * rather than on its own.
+     *
+     * <h2>The assumption this replaces</h2>
+     * {@link WorkflowSpec#statusAfter} answers for one observation in isolation, and the run's
+     * outcome was whatever the last such answer said. That holds while a run has one thread
+     * of work. ShopSaga (2026-10-22) cancelled an order mid-payment and undid two branches at
+     * once: the first release to finish read as COMPENSATED although the refund was still
+     * open, and the payment reply that arrived after the cancel read as COMPLETED. Both are
+     * one event deciding for the whole run. The shape matrix
+     * ({@code SagaShapeMatrixTest}) found the same in every shape with two compensation
+     * branches or a reply after compensation began, on systems never observed.
+     *
+     * <h2>Read against all branches</h2>
+     * <ul>
+     *   <li>Finishing a compensation ends the run only when no compensation is open: none
+     *       started and unfinished, and none owed by a compensable step observed to complete.
+     *       Until then the run is COMPENSATING.</li>
+     *   <li>While compensation is open, a forward step's outcome is not the run's outcome.
+     *       It still says the step was done, so its compensation is owed. Once the run has
+     *       ended it is read as before: work after the ending.</li>
+     * </ul>
+     */
+    private static List<Bearing> bearingsOf(WorkflowSpec spec, List<SagaEvent> ordered) {
+        Set<String> compensationsStarted = new LinkedHashSet<>();
+        Set<String> compensationsDone = new LinkedHashSet<>();
+        Set<String> owed = new LinkedHashSet<>();
+        boolean compensating = false;
+        List<Bearing> bearings = new ArrayList<>();
+        for (SagaEvent event : ordered) {
+            Optional<EventRole> role = spec.classifyEvent(event.getEventType());
+            Optional<SagaStatus> alone = role.flatMap(spec::statusAfter);
+            if (role.isEmpty()) continue;
+            String step = role.get().stepId();
+            if (spec.isCompensationStep(step)) {
+                if (role.get().role() == EventRole.Role.STARTED) compensationsStarted.add(step);
+                if (role.get().role() == EventRole.Role.COMPLETED) compensationsDone.add(step);
+                compensating = true;
+                if (alone.orElse(null) == SagaStatus.COMPENSATED) {
+                    Set<String> open = new LinkedHashSet<>(compensationsStarted);
+                    open.addAll(owed);
+                    open.removeAll(compensationsDone);
+                    alone = Optional.of(open.isEmpty() ? SagaStatus.COMPENSATED : SagaStatus.COMPENSATING);
+                }
+            } else {
+                if (role.get().role() == EventRole.Role.COMPLETED) {
+                    spec.compensationOf(step).ifPresent(owed::add);
+                }
+                // Only while compensation is open. After the run has ended, a forward outcome
+                // is work done after the ending, and stays the contradiction it is (C4).
+                boolean ended = !bearings.isEmpty() && bearings.get(bearings.size() - 1).status().isTerminal();
+                if (compensating && !ended) continue;
+                if (alone.orElse(null) == SagaStatus.COMPENSATING) compensating = true;
+            }
+            alone.ifPresent(status -> bearings.add(new Bearing(event, status)));
+        }
+        return bearings;
+    }
+
+    /**
+     * The observations that put the run into {@code terminal}, read against every branch
+     * ({@link #bearingsOf}): a forward reply after compensation began, or one branch's
+     * compensation finishing while another is open, is not one.
+     */
+    public List<SagaEvent> endingsAs(SagaStatus terminal) {
+        return bearings.stream().filter(b -> b.status() == terminal).map(Bearing::event).toList();
     }
 
     // ── what the caller asks ──────────────────────────────────────────────────

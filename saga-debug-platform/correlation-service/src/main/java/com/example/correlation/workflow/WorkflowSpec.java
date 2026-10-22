@@ -844,6 +844,13 @@ public class WorkflowSpec {
     }
 
 
+    /** The compensation step that undoes this forward step, when one is declared. */
+    public Optional<String> compensationOf(String stepId) {
+        if (steps == null || stepId == null) return Optional.empty();
+        return steps.stream().filter(s -> stepId.equals(s.getId()))
+                .map(StepSpec::getCompensation).filter(Objects::nonNull).findFirst();
+    }
+
     public boolean isCompensationStep(String stepId) {
         return compensationSteps != null && compensationSteps.stream()
                 .anyMatch(s -> s.getId() != null && s.getId().equals(stepId));
