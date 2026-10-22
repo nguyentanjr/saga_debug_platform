@@ -1096,6 +1096,14 @@ public class AnomalyDetectionService {
             if (anomalyRepository.existsBySagaIdAndAnomalyType(
                     saga.getSagaId(), AnomalyType.MISSING_TERMINAL_EVENT)) continue;
 
+            // EXT-OVERLOAD-FALSE-FINDINGS: the run list was read before this pass reached the
+            // run; an ending ingested in between is withdrawn only by the next ending, which may
+            // never come (bench 2000 ev/s: MISSING_TERMINAL_EVENT standing on 4 COMPLETED runs,
+            // raised 0.1 s after their ending was read). Ask the evidence, as the stuck pass does.
+            WorkflowSpec spec = specFor(saga);
+            if (spec != null && EvidenceTimeline.of(spec,
+                    sagaEventRepository.findBySagaIdOrderByTimestampAsc(saga.getSagaId())).endedAt().isPresent()) continue;
+
             long eventCount = sagaEventRepository.countBySagaId(saga.getSagaId());
             if (eventCount >= 2) {
                 SagaEvent lastEvent = sagaEventRepository

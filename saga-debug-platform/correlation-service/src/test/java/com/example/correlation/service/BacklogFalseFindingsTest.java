@@ -85,6 +85,25 @@ class BacklogFalseFindingsTest {
         assertThat(standing(p)).doesNotContain(AnomalyType.SAGA_STUCK);
     }
 
+    /** Same race as the stuck pass, for MISSING_TERMINAL_EVENT (bench 2000 ev/s, d047c60). */
+    @Test
+    void missingTerminalPassSkipsARunThatEndedAfterTheRunListWasRead() {
+        ReplayPipeline p = new ReplayPipeline();
+        when(p.sagas.findByStatusInAndLastUpdatedBefore(any(), any(), any())).thenAnswer(c ->
+                p.instances.values().stream().filter(s -> s.getStatus() == SagaStatus.IN_PROGRESS).toList());
+        when(p.eventRepo.countBySagaId(anyString())).thenAnswer(c ->
+                p.events.stream().filter(e -> e.getSagaId().equals(c.getArgument(0))).count());
+        Instant t0 = Instant.now().minusSeconds(3600);
+        deliver(p, "e1", "ORDER_CREATED", t0, t0);
+        deliver(p, "e2", "PAYMENT_COMPLETED", t0.plusMillis(500), t0);
+        deliver(p, "e3", "INVENTORY_RESERVED", t0.plusMillis(1000), t0);
+        p.instances.values().forEach(s -> s.setStatus(SagaStatus.IN_PROGRESS));
+
+        p.detector.detectMissingTerminalEvents();
+
+        assertThat(standing(p)).doesNotContain(AnomalyType.MISSING_TERMINAL_EVENT);
+    }
+
     @Test
     void silenceIsCountedFromTheLatestArrivalNotTheLatestStamp() {
         ReplayPipeline p = new ReplayPipeline();
