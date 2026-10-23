@@ -493,10 +493,11 @@ public class AnomalyDetectionService {
 
     public void detectDuplicateCompensation(WorkflowSpec workflow, String sagaId, List<SagaEvent> events) {
         if (workflow == null) return;
-        // Per compensation step, and only a start after that step already completed: two
-        // branches undone at once are two compensations, and a request re-sent while its
-        // compensation is still open is a retry (ShopSaga, 2026-10-22). Undoing again what
-        // was already undone is the duplicate. Events are in business order.
+        // Per compensation step. Two branches undone at once are two compensations, each
+        // started once. A request re-sent once the step's declared deadline passed unanswered
+        // is a retry (ShopSaga payment-stop re-sent the refund after its 30s deadline,
+        // 2026-10-22). Re-sent inside the deadline (SC23: 0.5s later), or after the step
+        // already completed, it is the duplicate. Events are in business order.
         Map<String, List<SagaEvent>> startsByStep = new LinkedHashMap<>();
         Set<String> completed = new HashSet<>();
         List<SagaEvent> compStartEvents = List.of();
@@ -508,8 +509,13 @@ public class AnomalyDetectionService {
             if (role.get().role() == WorkflowSpec.EventRole.Role.COMPLETED) completed.add(step);
             if (role.get().role() != WorkflowSpec.EventRole.Role.STARTED) continue;
             List<SagaEvent> starts = startsByStep.computeIfAbsent(step, k -> new ArrayList<>());
+            SagaEvent previous = starts.isEmpty() ? null : starts.get(starts.size() - 1);
             starts.add(e);
-            if (completed.contains(step) && compStartEvents.isEmpty()) compStartEvents = List.copyOf(starts);
+            if (previous == null || !compStartEvents.isEmpty()) continue;
+            boolean insideDeadline = previous.getTimestamp() != null && e.getTimestamp() != null
+                    && Duration.between(previous.getTimestamp(), e.getTimestamp()).getSeconds()
+                            < workflow.getStepTimeoutSeconds(step);
+            if (completed.contains(step) || insideDeadline) compStartEvents = List.copyOf(starts);
         }
         long startCount = compStartEvents.size();
         if (startCount > 1 && !anomalyRepository.existsBySagaIdAndAnomalyType(

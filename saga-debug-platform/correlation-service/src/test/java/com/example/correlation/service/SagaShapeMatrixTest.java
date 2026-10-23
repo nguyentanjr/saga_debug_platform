@@ -48,7 +48,10 @@ class SagaShapeMatrixTest {
 
     record Ev(String id, String type, Instant at) {}
 
-    record Run(String scenario, List<Ev> events, String expected) {}
+    /** @param required findings the run must raise: true positives, not false ones */
+    record Run(String scenario, List<Ev> events, String expected, Set<String> required) {
+        Run(String scenario, List<Ev> events, String expected) { this(scenario, events, expected, Set.of()); }
+    }
 
     @Test
     void everyGeneratedShapeEndsAsGeneratedWithoutFalseFindings() {
@@ -105,6 +108,10 @@ class SagaShapeMatrixTest {
         }
         ReplayPipeline.Outcome o = p.outcome(key.canonical());
         Set<String> allowed = new HashSet<>(ALWAYS_ALLOWED);
+        allowed.addAll(run.required());
+        if (!o.anomalies.containsAll(run.required())) {
+            return "missed " + run.required() + " standing=" + o.anomalies;
+        }
         if (transport != Transport.IN_ORDER && transport != Transport.DUPLICATE) allowed.add("OUT_OF_ORDER");
         if (transport == Transport.DUPLICATE) { allowed.add("EXACT_DUPLICATE_EVENT"); allowed.add("OUT_OF_ORDER"); }
         List<String> falseFindings = o.anomalies.stream().filter(a -> !allowed.contains(a)).toList();
@@ -256,17 +263,32 @@ class SagaShapeMatrixTest {
                 runs.add(new Run("lateReply@" + failing + "+" + (at - before.size()), withReply, "COMPENSATED"));
             }
 
-            // The source re-sends the in-flight step's compensation before it finished, and the
-            // retry is answered again (ShopSaga payment-stop: one refund row, two replies).
+            // The source re-sends the in-flight step's compensation once its declared deadline
+            // (30s) passed unanswered, and both requests are answered (ShopSaga payment-stop:
+            // one refund row, two replies). A retry, not a duplicate.
+            // Re-sent well inside the deadline, it is a duplicate (SC23) and must be reported.
             if (compensable(compensation, failing)) {
                 String undo = "C" + failing;
-                List<Ev> retried = new ArrayList<>(cancel.events);
+                int reqAt = 0;
+                while (!cancel.events.get(reqAt).type().equals(undo + "_REQ")) reqAt++;
+                Instant firstRequest = cancel.events.get(reqAt).at();
+                List<Ev> retried = new ArrayList<>();
+                for (Ev e : cancel.events) {
+                    boolean afterRequest = e.at().isAfter(firstRequest);
+                    retried.add(afterRequest ? new Ev(e.id(), e.type(), e.at().plusSeconds(32)) : e);
+                }
                 int doneAt = 0;
                 while (!retried.get(doneAt).type().equals(undo + "_DONE")) doneAt++;
                 Ev answered = retried.get(doneAt);
-                retried.add(doneAt, new Ev("e-retry", undo + "_REQ", answered.at().minusMillis(500)));
+                retried.add(doneAt, new Ev("e-retry", undo + "_REQ", firstRequest.plusSeconds(31)));
                 retried.add(doneAt + 2, new Ev("e-reack", undo + "_DONE", answered.at().plusMillis(200)));
+                retried.sort(Comparator.comparing(Ev::at));
                 runs.add(new Run("retriedUndo@" + failing, retried, "COMPENSATED"));
+
+                List<Ev> duplicated = new ArrayList<>(cancel.events);
+                duplicated.add(reqAt + 1, new Ev("e-dup", undo + "_REQ", firstRequest.plusMillis(500)));
+                runs.add(new Run("duplicateUndo@" + failing, duplicated, "COMPENSATED",
+                        Set.of("DUPLICATE_COMPENSATION")));
             }
         }
         return runs;
