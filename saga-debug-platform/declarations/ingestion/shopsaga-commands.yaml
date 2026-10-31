@@ -1,0 +1,22 @@
+# ShopSaga (patilharsh01/ecommerce-microservices, unmodified): commands the order-service
+# orchestrator sends through its transactional outbox. Every message carries messageId, orderId and
+# occurredAt; the record key is the orderId; the outbox relay names the Java type in the
+# "message-type" header. Nothing in that project is changed to be observed.
+source:
+  name: shopsaga-commands
+  system: shopsaga
+  topicPattern: 'inventory\.commands|payment\.commands'
+
+  fields:
+    serviceName: const:order-service
+    executionId: key
+    eventId: messageId
+    eventType: header:message-type
+    eventTime: occurredAt
+    businessKey: orderId
+
+  eventTypes:
+    "com.harshalpatil.ecommerce.common.messaging.inventory.ReserveStockCommand": STOCK_RESERVE_REQUESTED
+    "com.harshalpatil.ecommerce.common.messaging.inventory.ReleaseStockCommand": STOCK_RELEASE_REQUESTED
+    "com.harshalpatil.ecommerce.common.messaging.payment.ProcessPaymentCommand": PAYMENT_REQUESTED
+    "com.harshalpatil.ecommerce.common.messaging.payment.RefundPaymentCommand": REFUND_REQUESTED

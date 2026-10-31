@@ -1,0 +1,64 @@
+# ShopSaga order saga (order-service/OrderSagaOrchestrator): reserve stock, then charge. A declined
+# charge releases the stock; a step that overruns its deadline (ORDER_SAGA_STEP_TIMEOUT, default 30s)
+# is cancelled by the orchestrator's sweeper, which releases stock and, once a charge was asked for,
+# refunds it. Services are the compose service names, scoped to the deployment (-p shopsaga).
+workflow:
+  name: SHOPSAGA_ORDER
+  version: "1.0"
+  runtimeScope: shopsaga
+
+  steps:
+    - id: RESERVE_STOCK
+      service: product-service
+      timeout: 30s
+      compensation: RELEASE_STOCK
+      events:
+        started: STOCK_RESERVE_REQUESTED
+        completed: STOCK_RESERVED
+        failed: STOCK_REJECTED
+
+    - id: TAKE_PAYMENT
+      service: payment-service
+      timeout: 30s
+      compensation: REFUND_PAYMENT
+      events:
+        started: PAYMENT_REQUESTED
+        completed: PAYMENT_COMPLETED
+        failed: PAYMENT_DECLINED
+
+  compensationSteps:
+    - id: RELEASE_STOCK
+      service: product-service
+      timeout: 30s
+      events:
+        started: STOCK_RELEASE_REQUESTED
+        completed: STOCK_RELEASED
+
+    - id: REFUND_PAYMENT
+      service: payment-service
+      timeout: 30s
+      events:
+        started: REFUND_REQUESTED
+        completed: PAYMENT_REFUNDED
+
+  transitions:
+    - from: STARTED
+      to: RESERVE_STOCK
+    - from: RESERVE_STOCK
+      to: TAKE_PAYMENT
+      condition: SUCCESS
+    - from: RESERVE_STOCK
+      to: FAILED
+      condition: FAILED
+    - from: TAKE_PAYMENT
+      to: COMPLETED
+      condition: SUCCESS
+    - from: TAKE_PAYMENT
+      to: COMPENSATING
+      condition: FAILED
+    - from: RELEASE_STOCK
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: REFUND_PAYMENT
+      to: COMPENSATED
+      condition: SUCCESS

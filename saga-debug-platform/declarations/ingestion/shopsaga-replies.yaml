@@ -1,0 +1,21 @@
+# ShopSaga replies: product-service (stock) and payment-service share one topic, so the publisher
+# is not a constant of the topic; the workflow places each reply at its step and service.
+source:
+  name: shopsaga-replies
+  system: shopsaga
+  topicPattern: 'order\.saga\.replies'
+
+  fields:
+    executionId: key
+    eventId: messageId
+    eventType: header:message-type
+    eventTime: occurredAt
+    businessKey: orderId
+
+  eventTypes:
+    "com.harshalpatil.ecommerce.common.messaging.inventory.StockReserved": STOCK_RESERVED
+    "com.harshalpatil.ecommerce.common.messaging.inventory.StockReservationFailed": STOCK_REJECTED
+    "com.harshalpatil.ecommerce.common.messaging.inventory.StockReleased": STOCK_RELEASED
+    "com.harshalpatil.ecommerce.common.messaging.payment.PaymentCompleted": PAYMENT_COMPLETED
+    "com.harshalpatil.ecommerce.common.messaging.payment.PaymentDeclined": PAYMENT_DECLINED
+    "com.harshalpatil.ecommerce.common.messaging.payment.PaymentRefunded": PAYMENT_REFUNDED
