@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * began). The shapes are finite, so they are enumerated here:
  *
  * <ul>
- *   <li>step structure: sequential (2..4 steps), parallel fan-out with join;</li>
+ *   <li>step structure: sequential (2..4 steps, and 20 for long sagas), parallel fan-out with join;</li>
  *   <li>compensation structure: none, one branch, every completed step;</li>
  *   <li>incident: none, business failure at each step, cancel mid-step, reply after cancel;</li>
  *   <li>compensation mode: concurrent branches, sequential in reverse;</li>
@@ -41,7 +41,7 @@ class SagaShapeMatrixTest {
     private static final Instant T0 = Instant.parse("2026-10-22T00:00:00Z");
     private static final Set<String> ALWAYS_ALLOWED = Set.of("MISSING_TRACE_CONTEXT");
 
-    enum Structure { SEQ2, SEQ3, SEQ4, PARALLEL }
+    enum Structure { SEQ2, SEQ3, SEQ4, SEQ20, PARALLEL }
     enum Compensation { NONE, FIRST_ONLY, ALL }
     enum Mode { CONCURRENT, REVERSE }
     enum Transport { IN_ORDER, REVERSED, SHUFFLED_1, SHUFFLED_2, SHUFFLED_3, DUPLICATE }
@@ -133,6 +133,7 @@ class SagaShapeMatrixTest {
             case SEQ2 -> List.of("S1", "S2");
             case SEQ3 -> List.of("S1", "S2", "S3");
             case SEQ4, PARALLEL -> List.of("S1", "S2", "S3", "S4");
+            case SEQ20 -> java.util.stream.IntStream.rangeClosed(1, 20).mapToObj(i -> "S" + i).toList();
         };
     }
 

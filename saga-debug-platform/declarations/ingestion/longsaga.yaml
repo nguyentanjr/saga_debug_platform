@@ -1,0 +1,13 @@
+# Long loan saga (long-saga/): every service publishes to loan.saga, keyed by saga id, with its
+# own name, a fresh event id and its clock in the body.
+source:
+  name: longsaga
+  system: longsaga
+  topicPattern: 'loan\.saga'
+
+  fields:
+    executionId: key
+    eventId: eventId
+    eventType: type
+    eventTime: occurredAt
+    serviceName: serviceName

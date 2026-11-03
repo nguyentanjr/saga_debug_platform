@@ -1,0 +1,4 @@
+{
+  "/api": { "target": "http://localhost:29084", "secure": false },
+  "/rca": { "target": "http://localhost:29084", "secure": false }
+}

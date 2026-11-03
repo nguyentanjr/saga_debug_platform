@@ -1,0 +1,514 @@
+# Long loan saga (long-saga/, synthetic, built for the defence demo): 20 steps, each its own
+# container. A failure at step k is undone in reverse from k-1 down to 1. Services are the
+# compose service names of project "longsaga".
+workflow:
+  name: LONG_LOAN_SAGA
+  version: "1.0"
+  runtimeScope: longsaga
+  sources: [longsaga]
+
+  steps:
+    - id: RECEIVE_APPLICATION
+      service: intake-service
+      timeout: 10s
+      compensation: UNDO_RECEIVE_APPLICATION
+      events:
+        started: RECEIVE_APPLICATION_STARTED
+        completed: RECEIVE_APPLICATION_DONE
+        failed: RECEIVE_APPLICATION_FAILED
+
+    - id: VERIFY_IDENTITY
+      service: identity-service
+      timeout: 10s
+      compensation: UNDO_VERIFY_IDENTITY
+      events:
+        started: VERIFY_IDENTITY_STARTED
+        completed: VERIFY_IDENTITY_DONE
+        failed: VERIFY_IDENTITY_FAILED
+
+    - id: CHECK_BLACKLIST
+      service: blacklist-service
+      timeout: 10s
+      compensation: UNDO_CHECK_BLACKLIST
+      events:
+        started: CHECK_BLACKLIST_STARTED
+        completed: CHECK_BLACKLIST_DONE
+        failed: CHECK_BLACKLIST_FAILED
+
+    - id: PULL_CREDIT_REPORT
+      service: credit-bureau-service
+      timeout: 10s
+      compensation: UNDO_PULL_CREDIT_REPORT
+      events:
+        started: PULL_CREDIT_REPORT_STARTED
+        completed: PULL_CREDIT_REPORT_DONE
+        failed: PULL_CREDIT_REPORT_FAILED
+
+    - id: SCORE_CREDIT
+      service: scoring-service
+      timeout: 10s
+      compensation: UNDO_SCORE_CREDIT
+      events:
+        started: SCORE_CREDIT_STARTED
+        completed: SCORE_CREDIT_DONE
+        failed: SCORE_CREDIT_FAILED
+
+    - id: VERIFY_INCOME
+      service: income-service
+      timeout: 10s
+      compensation: UNDO_VERIFY_INCOME
+      events:
+        started: VERIFY_INCOME_STARTED
+        completed: VERIFY_INCOME_DONE
+        failed: VERIFY_INCOME_FAILED
+
+    - id: VERIFY_EMPLOYMENT
+      service: employment-service
+      timeout: 10s
+      compensation: UNDO_VERIFY_EMPLOYMENT
+      events:
+        started: VERIFY_EMPLOYMENT_STARTED
+        completed: VERIFY_EMPLOYMENT_DONE
+        failed: VERIFY_EMPLOYMENT_FAILED
+
+    - id: APPRAISE_COLLATERAL
+      service: appraisal-service
+      timeout: 10s
+      compensation: UNDO_APPRAISE_COLLATERAL
+      events:
+        started: APPRAISE_COLLATERAL_STARTED
+        completed: APPRAISE_COLLATERAL_DONE
+        failed: APPRAISE_COLLATERAL_FAILED
+
+    - id: INSURE_COLLATERAL
+      service: insurance-service
+      timeout: 10s
+      compensation: UNDO_INSURE_COLLATERAL
+      events:
+        started: INSURE_COLLATERAL_STARTED
+        completed: INSURE_COLLATERAL_DONE
+        failed: INSURE_COLLATERAL_FAILED
+
+    - id: PRICE_LOAN
+      service: pricing-service
+      timeout: 10s
+      compensation: UNDO_PRICE_LOAN
+      events:
+        started: PRICE_LOAN_STARTED
+        completed: PRICE_LOAN_DONE
+        failed: PRICE_LOAN_FAILED
+
+    - id: RESERVE_FUNDS
+      service: treasury-service
+      timeout: 10s
+      compensation: UNDO_RESERVE_FUNDS
+      events:
+        started: RESERVE_FUNDS_STARTED
+        completed: RESERVE_FUNDS_DONE
+        failed: RESERVE_FUNDS_FAILED
+
+    - id: APPROVE_RISK
+      service: risk-service
+      timeout: 10s
+      compensation: UNDO_APPROVE_RISK
+      events:
+        started: APPROVE_RISK_STARTED
+        completed: APPROVE_RISK_DONE
+        failed: APPROVE_RISK_FAILED
+
+    - id: GENERATE_CONTRACT
+      service: contract-service
+      timeout: 10s
+      compensation: UNDO_GENERATE_CONTRACT
+      events:
+        started: GENERATE_CONTRACT_STARTED
+        completed: GENERATE_CONTRACT_DONE
+        failed: GENERATE_CONTRACT_FAILED
+
+    - id: SIGN_CONTRACT
+      service: esign-service
+      timeout: 10s
+      compensation: UNDO_SIGN_CONTRACT
+      events:
+        started: SIGN_CONTRACT_STARTED
+        completed: SIGN_CONTRACT_DONE
+        failed: SIGN_CONTRACT_FAILED
+
+    - id: REGISTER_LIEN
+      service: lien-service
+      timeout: 10s
+      compensation: UNDO_REGISTER_LIEN
+      events:
+        started: REGISTER_LIEN_STARTED
+        completed: REGISTER_LIEN_DONE
+        failed: REGISTER_LIEN_FAILED
+
+    - id: OPEN_LOAN_ACCOUNT
+      service: account-service
+      timeout: 10s
+      compensation: UNDO_OPEN_LOAN_ACCOUNT
+      events:
+        started: OPEN_LOAN_ACCOUNT_STARTED
+        completed: OPEN_LOAN_ACCOUNT_DONE
+        failed: OPEN_LOAN_ACCOUNT_FAILED
+
+    - id: SETUP_REPAYMENT
+      service: repayment-service
+      timeout: 10s
+      compensation: UNDO_SETUP_REPAYMENT
+      events:
+        started: SETUP_REPAYMENT_STARTED
+        completed: SETUP_REPAYMENT_DONE
+        failed: SETUP_REPAYMENT_FAILED
+
+    - id: DISBURSE_FUNDS
+      service: disbursement-service
+      timeout: 10s
+      compensation: UNDO_DISBURSE_FUNDS
+      events:
+        started: DISBURSE_FUNDS_STARTED
+        completed: DISBURSE_FUNDS_DONE
+        failed: DISBURSE_FUNDS_FAILED
+
+    - id: NOTIFY_CUSTOMER
+      service: notification-service
+      timeout: 10s
+      compensation: UNDO_NOTIFY_CUSTOMER
+      events:
+        started: NOTIFY_CUSTOMER_STARTED
+        completed: NOTIFY_CUSTOMER_DONE
+        failed: NOTIFY_CUSTOMER_FAILED
+
+    - id: ARCHIVE_DOSSIER
+      service: archive-service
+      timeout: 10s
+      compensation: UNDO_ARCHIVE_DOSSIER
+      events:
+        started: ARCHIVE_DOSSIER_STARTED
+        completed: ARCHIVE_DOSSIER_DONE
+        failed: ARCHIVE_DOSSIER_FAILED
+
+  compensationSteps:
+    - id: UNDO_RECEIVE_APPLICATION
+      service: intake-service
+      timeout: 10s
+      events:
+        started: UNDO_RECEIVE_APPLICATION_STARTED
+        completed: UNDO_RECEIVE_APPLICATION_DONE
+
+    - id: UNDO_VERIFY_IDENTITY
+      service: identity-service
+      timeout: 10s
+      events:
+        started: UNDO_VERIFY_IDENTITY_STARTED
+        completed: UNDO_VERIFY_IDENTITY_DONE
+
+    - id: UNDO_CHECK_BLACKLIST
+      service: blacklist-service
+      timeout: 10s
+      events:
+        started: UNDO_CHECK_BLACKLIST_STARTED
+        completed: UNDO_CHECK_BLACKLIST_DONE
+
+    - id: UNDO_PULL_CREDIT_REPORT
+      service: credit-bureau-service
+      timeout: 10s
+      events:
+        started: UNDO_PULL_CREDIT_REPORT_STARTED
+        completed: UNDO_PULL_CREDIT_REPORT_DONE
+
+    - id: UNDO_SCORE_CREDIT
+      service: scoring-service
+      timeout: 10s
+      events:
+        started: UNDO_SCORE_CREDIT_STARTED
+        completed: UNDO_SCORE_CREDIT_DONE
+
+    - id: UNDO_VERIFY_INCOME
+      service: income-service
+      timeout: 10s
+      events:
+        started: UNDO_VERIFY_INCOME_STARTED
+        completed: UNDO_VERIFY_INCOME_DONE
+
+    - id: UNDO_VERIFY_EMPLOYMENT
+      service: employment-service
+      timeout: 10s
+      events:
+        started: UNDO_VERIFY_EMPLOYMENT_STARTED
+        completed: UNDO_VERIFY_EMPLOYMENT_DONE
+
+    - id: UNDO_APPRAISE_COLLATERAL
+      service: appraisal-service
+      timeout: 10s
+      events:
+        started: UNDO_APPRAISE_COLLATERAL_STARTED
+        completed: UNDO_APPRAISE_COLLATERAL_DONE
+
+    - id: UNDO_INSURE_COLLATERAL
+      service: insurance-service
+      timeout: 10s
+      events:
+        started: UNDO_INSURE_COLLATERAL_STARTED
+        completed: UNDO_INSURE_COLLATERAL_DONE
+
+    - id: UNDO_PRICE_LOAN
+      service: pricing-service
+      timeout: 10s
+      events:
+        started: UNDO_PRICE_LOAN_STARTED
+        completed: UNDO_PRICE_LOAN_DONE
+
+    - id: UNDO_RESERVE_FUNDS
+      service: treasury-service
+      timeout: 10s
+      events:
+        started: UNDO_RESERVE_FUNDS_STARTED
+        completed: UNDO_RESERVE_FUNDS_DONE
+
+    - id: UNDO_APPROVE_RISK
+      service: risk-service
+      timeout: 10s
+      events:
+        started: UNDO_APPROVE_RISK_STARTED
+        completed: UNDO_APPROVE_RISK_DONE
+
+    - id: UNDO_GENERATE_CONTRACT
+      service: contract-service
+      timeout: 10s
+      events:
+        started: UNDO_GENERATE_CONTRACT_STARTED
+        completed: UNDO_GENERATE_CONTRACT_DONE
+
+    - id: UNDO_SIGN_CONTRACT
+      service: esign-service
+      timeout: 10s
+      events:
+        started: UNDO_SIGN_CONTRACT_STARTED
+        completed: UNDO_SIGN_CONTRACT_DONE
+
+    - id: UNDO_REGISTER_LIEN
+      service: lien-service
+      timeout: 10s
+      events:
+        started: UNDO_REGISTER_LIEN_STARTED
+        completed: UNDO_REGISTER_LIEN_DONE
+
+    - id: UNDO_OPEN_LOAN_ACCOUNT
+      service: account-service
+      timeout: 10s
+      events:
+        started: UNDO_OPEN_LOAN_ACCOUNT_STARTED
+        completed: UNDO_OPEN_LOAN_ACCOUNT_DONE
+
+    - id: UNDO_SETUP_REPAYMENT
+      service: repayment-service
+      timeout: 10s
+      events:
+        started: UNDO_SETUP_REPAYMENT_STARTED
+        completed: UNDO_SETUP_REPAYMENT_DONE
+
+    - id: UNDO_DISBURSE_FUNDS
+      service: disbursement-service
+      timeout: 10s
+      events:
+        started: UNDO_DISBURSE_FUNDS_STARTED
+        completed: UNDO_DISBURSE_FUNDS_DONE
+
+    - id: UNDO_NOTIFY_CUSTOMER
+      service: notification-service
+      timeout: 10s
+      events:
+        started: UNDO_NOTIFY_CUSTOMER_STARTED
+        completed: UNDO_NOTIFY_CUSTOMER_DONE
+
+    - id: UNDO_ARCHIVE_DOSSIER
+      service: archive-service
+      timeout: 10s
+      events:
+        started: UNDO_ARCHIVE_DOSSIER_STARTED
+        completed: UNDO_ARCHIVE_DOSSIER_DONE
+
+  transitions:
+    - from: STARTED
+      to: RECEIVE_APPLICATION
+    - from: RECEIVE_APPLICATION
+      to: FAILED
+      condition: FAILED
+    - from: RECEIVE_APPLICATION
+      to: VERIFY_IDENTITY
+      condition: SUCCESS
+    - from: VERIFY_IDENTITY
+      to: COMPENSATING
+      condition: FAILED
+    - from: VERIFY_IDENTITY
+      to: CHECK_BLACKLIST
+      condition: SUCCESS
+    - from: CHECK_BLACKLIST
+      to: COMPENSATING
+      condition: FAILED
+    - from: CHECK_BLACKLIST
+      to: PULL_CREDIT_REPORT
+      condition: SUCCESS
+    - from: PULL_CREDIT_REPORT
+      to: COMPENSATING
+      condition: FAILED
+    - from: PULL_CREDIT_REPORT
+      to: SCORE_CREDIT
+      condition: SUCCESS
+    - from: SCORE_CREDIT
+      to: COMPENSATING
+      condition: FAILED
+    - from: SCORE_CREDIT
+      to: VERIFY_INCOME
+      condition: SUCCESS
+    - from: VERIFY_INCOME
+      to: COMPENSATING
+      condition: FAILED
+    - from: VERIFY_INCOME
+      to: VERIFY_EMPLOYMENT
+      condition: SUCCESS
+    - from: VERIFY_EMPLOYMENT
+      to: COMPENSATING
+      condition: FAILED
+    - from: VERIFY_EMPLOYMENT
+      to: APPRAISE_COLLATERAL
+      condition: SUCCESS
+    - from: APPRAISE_COLLATERAL
+      to: COMPENSATING
+      condition: FAILED
+    - from: APPRAISE_COLLATERAL
+      to: INSURE_COLLATERAL
+      condition: SUCCESS
+    - from: INSURE_COLLATERAL
+      to: COMPENSATING
+      condition: FAILED
+    - from: INSURE_COLLATERAL
+      to: PRICE_LOAN
+      condition: SUCCESS
+    - from: PRICE_LOAN
+      to: COMPENSATING
+      condition: FAILED
+    - from: PRICE_LOAN
+      to: RESERVE_FUNDS
+      condition: SUCCESS
+    - from: RESERVE_FUNDS
+      to: COMPENSATING
+      condition: FAILED
+    - from: RESERVE_FUNDS
+      to: APPROVE_RISK
+      condition: SUCCESS
+    - from: APPROVE_RISK
+      to: COMPENSATING
+      condition: FAILED
+    - from: APPROVE_RISK
+      to: GENERATE_CONTRACT
+      condition: SUCCESS
+    - from: GENERATE_CONTRACT
+      to: COMPENSATING
+      condition: FAILED
+    - from: GENERATE_CONTRACT
+      to: SIGN_CONTRACT
+      condition: SUCCESS
+    - from: SIGN_CONTRACT
+      to: COMPENSATING
+      condition: FAILED
+    - from: SIGN_CONTRACT
+      to: REGISTER_LIEN
+      condition: SUCCESS
+    - from: REGISTER_LIEN
+      to: COMPENSATING
+      condition: FAILED
+    - from: REGISTER_LIEN
+      to: OPEN_LOAN_ACCOUNT
+      condition: SUCCESS
+    - from: OPEN_LOAN_ACCOUNT
+      to: COMPENSATING
+      condition: FAILED
+    - from: OPEN_LOAN_ACCOUNT
+      to: SETUP_REPAYMENT
+      condition: SUCCESS
+    - from: SETUP_REPAYMENT
+      to: COMPENSATING
+      condition: FAILED
+    - from: SETUP_REPAYMENT
+      to: DISBURSE_FUNDS
+      condition: SUCCESS
+    - from: DISBURSE_FUNDS
+      to: COMPENSATING
+      condition: FAILED
+    - from: DISBURSE_FUNDS
+      to: NOTIFY_CUSTOMER
+      condition: SUCCESS
+    - from: NOTIFY_CUSTOMER
+      to: COMPENSATING
+      condition: FAILED
+    - from: NOTIFY_CUSTOMER
+      to: ARCHIVE_DOSSIER
+      condition: SUCCESS
+    - from: ARCHIVE_DOSSIER
+      to: COMPENSATING
+      condition: FAILED
+    - from: ARCHIVE_DOSSIER
+      to: COMPLETED
+      condition: SUCCESS
+    - from: UNDO_RECEIVE_APPLICATION
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: UNDO_VERIFY_IDENTITY
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: UNDO_CHECK_BLACKLIST
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: UNDO_PULL_CREDIT_REPORT
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: UNDO_SCORE_CREDIT
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: UNDO_VERIFY_INCOME
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: UNDO_VERIFY_EMPLOYMENT
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: UNDO_APPRAISE_COLLATERAL
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: UNDO_INSURE_COLLATERAL
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: UNDO_PRICE_LOAN
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: UNDO_RESERVE_FUNDS
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: UNDO_APPROVE_RISK
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: UNDO_GENERATE_CONTRACT
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: UNDO_SIGN_CONTRACT
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: UNDO_REGISTER_LIEN
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: UNDO_OPEN_LOAN_ACCOUNT
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: UNDO_SETUP_REPAYMENT
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: UNDO_DISBURSE_FUNDS
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: UNDO_NOTIFY_CUSTOMER
+      to: COMPENSATED
+      condition: SUCCESS
+    - from: UNDO_ARCHIVE_DOSSIER
+      to: COMPENSATED
+      condition: SUCCESS

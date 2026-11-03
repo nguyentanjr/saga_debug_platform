@@ -1,0 +1,187 @@
+# Long loan saga: 20 services from one small image, a real Kafka, and its own observer.
+# Built for the defence demo -- a synthetic system, not a third-party one.
+#   docker compose -p longsaga -f long-saga/docker-compose.yml up -d --build
+#   curl -X POST "http://localhost:28080/start?count=1&failAt=17"
+name: longsaga
+x-step: &step
+  image: longsaga-step
+  depends_on: [kafka]
+  mem_limit: 32m
+x-env: &env
+  KAFKA: kafka:9092
+  STEPS: RECEIVE_APPLICATION,VERIFY_IDENTITY,CHECK_BLACKLIST,PULL_CREDIT_REPORT,SCORE_CREDIT,VERIFY_INCOME,VERIFY_EMPLOYMENT,APPRAISE_COLLATERAL,INSURE_COLLATERAL,PRICE_LOAN,RESERVE_FUNDS,APPROVE_RISK,GENERATE_CONTRACT,SIGN_CONTRACT,REGISTER_LIEN,OPEN_LOAN_ACCOUNT,SETUP_REPAYMENT,DISBURSE_FUNDS,NOTIFY_CUSTOMER,ARCHIVE_DOSSIER
+services:
+  kafka:
+    image: apache/kafka:3.7.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_HEAP_OPTS: -Xmx384m -Xms384m
+    mem_limit: 768m
+  intake-service:
+    <<: *step
+    build: ./step
+    ports: ["28080:8080"]
+    environment:
+      <<: *env
+      STEP: "1"
+      SERVICE: intake-service
+  identity-service:
+    <<: *step
+    environment:
+      <<: *env
+      STEP: "2"
+      SERVICE: identity-service
+  blacklist-service:
+    <<: *step
+    environment:
+      <<: *env
+      STEP: "3"
+      SERVICE: blacklist-service
+  credit-bureau-service:
+    <<: *step
+    environment:
+      <<: *env
+      STEP: "4"
+      SERVICE: credit-bureau-service
+  scoring-service:
+    <<: *step
+    environment:
+      <<: *env
+      STEP: "5"
+      SERVICE: scoring-service
+  income-service:
+    <<: *step
+    environment:
+      <<: *env
+      STEP: "6"
+      SERVICE: income-service
+  employment-service:
+    <<: *step
+    environment:
+      <<: *env
+      STEP: "7"
+      SERVICE: employment-service
+  appraisal-service:
+    <<: *step
+    environment:
+      <<: *env
+      STEP: "8"
+      SERVICE: appraisal-service
+  insurance-service:
+    <<: *step
+    environment:
+      <<: *env
+      STEP: "9"
+      SERVICE: insurance-service
+  pricing-service:
+    <<: *step
+    environment:
+      <<: *env
+      STEP: "10"
+      SERVICE: pricing-service
+  treasury-service:
+    <<: *step
+    environment:
+      <<: *env
+      STEP: "11"
+      SERVICE: treasury-service
+  risk-service:
+    <<: *step
+    environment:
+      <<: *env
+      STEP: "12"
+      SERVICE: risk-service
+  contract-service:
+    <<: *step
+    environment:
+      <<: *env
+      STEP: "13"
+      SERVICE: contract-service
+  esign-service:
+    <<: *step
+    environment:
+      <<: *env
+      STEP: "14"
+      SERVICE: esign-service
+  lien-service:
+    <<: *step
+    environment:
+      <<: *env
+      STEP: "15"
+      SERVICE: lien-service
+  account-service:
+    <<: *step
+    environment:
+      <<: *env
+      STEP: "16"
+      SERVICE: account-service
+  repayment-service:
+    <<: *step
+    environment:
+      <<: *env
+      STEP: "17"
+      SERVICE: repayment-service
+  disbursement-service:
+    <<: *step
+    environment:
+      <<: *env
+      STEP: "18"
+      SERVICE: disbursement-service
+  notification-service:
+    <<: *step
+    environment:
+      <<: *env
+      STEP: "19"
+      SERVICE: notification-service
+  archive-service:
+    <<: *step
+    environment:
+      <<: *env
+      STEP: "20"
+      SERVICE: archive-service
+
+  # The observer: its own database, reads this project's Kafka, sees container start/die only.
+  observer-db:
+    image: postgres:15
+    environment: { POSTGRES_USER: demo, POSTGRES_PASSWORD: demo, POSTGRES_DB: correlation_db }
+    mem_limit: 256m
+
+  observer:
+    build: ../correlation-service
+    image: longsaga-observer
+    depends_on: [observer-db, kafka]
+    mem_limit: 768m
+    environment:
+      JAVA_TOOL_OPTIONS: '-Xmx384m -XX:ActiveProcessorCount=2'
+      CORRELATION_DB_HOST: observer-db
+      CORRELATION_DB_PORT: 5432
+      CORRELATION_DB_USERNAME: demo
+      CORRELATION_DB_PASSWORD: demo
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_KAFKA_CONSUMER_GROUP_ID: longsaga-observer
+      CORRELATION_KAFKA_TOPIC_PATTERN: 'loan\.saga'
+      CORRELATION_DECLARATIONS_DIR: /app/declarations
+      CORRELATION_LIVENESS_DOCKER_ENABLED: "true"
+      CORRELATION_LIVENESS_DOCKER_ENDPOINT: tcp://events-proxy:2375
+    volumes:
+      - ../declarations:/app/declarations:ro
+    ports: ["29084:8084"]
+
+  events-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    environment: { EVENTS: 1, PING: 1, VERSION: 0, CONTAINERS: 0, POST: 0 }
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
