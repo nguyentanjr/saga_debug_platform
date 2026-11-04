@@ -188,6 +188,32 @@ class EwalletCorePaymentDeclarationTest {
         assertThat(p.anomalies).filteredOn(a -> a.getAnomalyType() == AnomalyType.SAGA_STUCK).hasSize(1);
     }
 
+    /** 1793611073159 was reported "nothing heard since" its partner call while inquiries kept arriving. */
+    @Test
+    void aStuckFindingSaysHowManyRepeatsItIgnored() {
+        ReplayPipeline p = deliver(16 * 60, "AUTHORIZE_STARTED", "AUTHORIZE_SUCCEEDED", "HOLD_STARTED", "HOLD_SUCCEEDED",
+                "PARTNER_STARTED");
+        send(p, Instant.now().minusSeconds(10 * 60), p.events.size(), "PARTNER_PENDING", "PARTNER_PENDING", "PARTNER_PENDING");
+
+        p.detector.detectStuckSagas();
+
+        assertThat(p.anomalies).filteredOn(a -> a.getAnomalyType() == AnomalyType.SAGA_STUCK).singleElement()
+                .satisfies(a -> assertThat(a.getDescription())
+                        .startsWith("Saga stuck: no progress since ")
+                        .contains(", 3 repeat(s) without progress ignored"));
+    }
+
+    @Test
+    void aStuckFindingWithNoRepeatsDoesNotMentionThem() {
+        ReplayPipeline p = deliver(16 * 60, "AUTHORIZE_STARTED", "AUTHORIZE_SUCCEEDED", "HOLD_STARTED", "HOLD_SUCCEEDED",
+                "PARTNER_STARTED");
+
+        p.detector.detectStuckSagas();
+
+        assertThat(p.anomalies).filteredOn(a -> a.getAnomalyType() == AnomalyType.SAGA_STUCK).singleElement()
+                .satisfies(a -> assertThat(a.getDescription()).doesNotContain("repeat"));
+    }
+
     private static java.util.Optional<String> resultType(String status, String subStatus, String original) throws Exception {
         com.fasterxml.jackson.databind.node.ObjectNode json = new ObjectMapper().createObjectNode().put("status", status);
         if (subStatus != null) json.put("transactionSubStatus", subStatus);

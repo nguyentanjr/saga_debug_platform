@@ -818,14 +818,23 @@ public class AnomalyDetectionService {
                         .anyMatch(a -> a.getAnomalyType() == AnomalyType.SAGA_STUCK
                                 && a.getDetectedAt().isAfter(lastHeardAt));
                 if (!alreadyDetected) {
+                    // "Nothing heard" was wrong whenever repeats kept arriving: 1793611073159 was
+                    // reported silent since 09:17:53 with PARTNER_PENDING read every two minutes
+                    // until 09:30. They are left out of the clock, so say how many were.
+                    long ignored = stored.stream()
+                            .filter(e -> workflow != null && workflow.isRepeatWithoutProgress(e.getEventType()))
+                            .filter(e -> lastHeardAt(e).isAfter(lastHeardAt))
+                            .count();
+                    String repeats = ignored == 0 ? ""
+                            : String.format(", %d repeat(s) without progress ignored", ignored);
                     createAnomaly(saga.getSagaId(), AnomalyType.SAGA_STUCK,
-                            String.format("Saga stuck: nothing heard since %s (last: %s, "
+                            String.format("Saga stuck: no progress since %s%s (last: %s, "
                                             + "stamped %s, timeout: %ds)",
-                                    lastHeardAt, cited.getEventType(),
+                                    lastHeardAt, repeats, cited.getEventType(),
                                     cited.getTimestamp(), timeoutSeconds),
                             details()
-                                    .observedValue(String.format("nothing heard since %s, after %s",
-                                            lastHeardAt, cited.getEventType()))
+                                    .observedValue(String.format("no progress since %s%s, after %s",
+                                            lastHeardAt, repeats, cited.getEventType()))
                                     .expectedValue(String.format("next event within %ds", timeoutSeconds))
                                     .thresholdSource(timeoutSource)
                                     .evidenceEvents(cited)
@@ -1174,11 +1183,15 @@ public class AnomalyDetectionService {
                 SagaEvent lastEvent = sagaEventRepository
                         .findTopBySagaIdOrderByTimestampDesc(saga.getSagaId())
                         .orElse(null);
+                // The finding is raised once and not rewritten, so the count is stated as of now:
+                // 1793611073159 still read "18 events" with 40 stored two days later.
+                Instant detectedAt = Instant.now();
                 createAnomaly(saga.getSagaId(), AnomalyType.MISSING_TERMINAL_EVENT,
-                        String.format("Saga has %d events but no terminal event after %ds",
-                                eventCount, maxTimeout),
+                        String.format("Saga had %d events at %s (when detected) but no terminal event after %ds",
+                                eventCount, detectedAt, maxTimeout),
                         details()
-                                .observedValue(String.format("%d events and no terminal event", eventCount))
+                                .observedValue(String.format("%d events at detection (%s) and no terminal event",
+                                        eventCount, detectedAt))
                                 .expectedValue(String.format("terminal event within %ds", maxTimeout))
                                 .thresholdSource("config:anomaly.detection.missing-terminal-timeout-multiplier")
                                 .evidenceEvents(lastEvent)

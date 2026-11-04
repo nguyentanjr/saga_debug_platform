@@ -49,6 +49,16 @@ class MissingTerminalThresholdTest {
         assertThat(raised(Duration.ofSeconds(90))).isEmpty();
     }
 
+    /** The finding is never rewritten, so its count must say when it was taken (1793611073159: 18 of 40). */
+    @Test
+    void theEventCountIsStatedAsOfDetection() {
+        raised(Duration.ofSeconds(150));
+        assertThat(descriptions).singleElement().asString()
+                .startsWith("Saga had 2 events at ").contains("(when detected)");
+    }
+
+    private final List<String> descriptions = new ArrayList<>();
+
     private List<AnomalyType> raised(Duration silence) {
         slowWorkflow.setName("SLOW_PARTNER");
         slowWorkflow.getSteps().forEach(step -> step.setTimeout("120s"));
@@ -74,6 +84,7 @@ class MissingTerminalThresholdTest {
         AnomalyRepository anomalies = mock(AnomalyRepository.class);
         when(anomalies.save(any(Anomaly.class))).thenAnswer(c -> {
             saved.add(((Anomaly) c.getArgument(0)).getAnomalyType());
+            descriptions.add(((Anomaly) c.getArgument(0)).getDescription());
             return c.getArgument(0);
         });
 
