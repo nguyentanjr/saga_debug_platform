@@ -1,0 +1,35 @@
+# Requests to ewallet-transfer-management. An unhold keeps its hold's orderId, but a secret-code
+# release is a new order: originalTransactionId is what ties it to the hold's accountingTransactionId
+# (the replies mapping declares the other half). Other transfer types (W2W, ...) stay unmapped and
+# unresolved. Topic names are staging's. The payload has no event id or event time.
+
+source:
+  name: ewallet-core-transfer-commands
+  system: ewallet-core-transfer
+  topicPattern: 'staging-ewallet-transfer-management-(v2|w2o)'
+
+  fields:
+    eventId: null
+    eventTime: null
+    stepName: null
+    executionId: orderId
+    aliasKey: originalTransactionId
+    businessKey: orderId
+    eventType: join:eventType+transferType+subTransferType+transactionType
+    serviceName: const:ewallet-transfer-management
+
+  # Sub types: TransferTypeEnum. RM and UH are named for the expiry job only when it sent them.
+  eventTypes:
+    'TRQ:WTW:1': W2N_REQUESTED
+    'TRQ:WTW:2': W2N_SECRET_CODE_ENTERED
+    'TRQ:WTO(:.*)?': W2O_REQUESTED
+    '(RM|UH):REFUND_EXPIRY_WITHDRAWAL': W2N_EXPIRED
+    'UH(:.*)?': UNHOLD_STARTED
+
+  redact:
+    - content
+    - partnerPayload
+    - fromWalletId
+    - toWalletId
+    - amount
+    - fee

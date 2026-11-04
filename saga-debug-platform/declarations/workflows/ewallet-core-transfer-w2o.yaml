@@ -1,0 +1,55 @@
+# Agent transfer to bank: Core Transfer type WTO, wallet to another institution.
+#
+# Read out of AppTransferToBankServiceImpl and ewallet-transfer-business, then checked on one live
+# staging run of 2026-11-02 (6305571611880308, W2O_Release_Success after 5.6s). The failure and
+# unhold paths come from the status constants alone: no such run has been seen.
+#
+#   HOLD_MONEY ─► SEND_TO_BANK ─► COMPLETED
+#       │               │
+#       ▼               ▼
+#     FAILED      UNHOLD_MONEY ─► COMPENSATED
+#
+# A successful hold publishes nothing of its own, so HOLD_MONEY declares no completion and a run
+# goes from its request straight to the send's outcome.
+
+workflow:
+  name: EWALLET_W2O_TRANSFER
+  version: "0.1"
+  sources: [ewallet-core-transfer]
+
+  steps:
+    - id: HOLD_MONEY
+      service: ewallet-transfer-management
+      timeout: 30s
+      compensation: UNHOLD_MONEY
+      events:
+        started: W2O_REQUESTED
+        failed: W2O_HOLD_FAILED
+        retry: W2O_HOLD_PENDING
+
+    - id: SEND_TO_BANK
+      service: ewallet-third-party
+      timeout: 15m
+      # A pending answer repeats while the partner is re-asked; only an outcome is progress.
+      retriesAreNotProgress: true
+      events:
+        completed: W2O_SEND_SUCCEEDED
+        failed: W2O_SEND_FAILED
+        retry: W2O_SEND_PENDING
+
+  compensationSteps:
+    - id: UNHOLD_MONEY
+      service: ewallet-transfer-management
+      timeout: 15m
+      events:
+        started: UNHOLD_STARTED
+        completed: UNHOLD_SUCCEEDED
+        failed: UNHOLD_FAILED
+
+  transitions:
+    - {from: STARTED, to: HOLD_MONEY}
+    - {from: HOLD_MONEY, to: SEND_TO_BANK, condition: SUCCESS}
+    - {from: HOLD_MONEY, to: FAILED, condition: FAILED}
+    - {from: SEND_TO_BANK, to: COMPLETED, condition: SUCCESS}
+    - {from: SEND_TO_BANK, to: COMPENSATING, condition: FAILED}
+    - {from: UNHOLD_MONEY, to: COMPENSATED, condition: SUCCESS}

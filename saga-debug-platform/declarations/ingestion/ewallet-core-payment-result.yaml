@@ -1,0 +1,45 @@
+# The result the core publishes to the agent, which ends a run of EWALLET_CORE_PAYMENT. requestId
+# here is the paymentId on the backbone's topics. Payload: base TransactionResultEvent.
+
+source:
+  name: ewallet-core-payment-result
+  system: ewallet-core-payment
+  topicPattern: 'CORE-PAYMENT-TRANSACTION-RESULT'
+
+  fields:
+    eventId: null
+    eventTime: null
+    stepName: null
+    executionId: requestId
+    businessKey: orderId
+    eventType: status
+    serviceName: eventSource
+
+  eventTypes:
+    SUCCESS: PAYMENT_SUCCEEDED
+    FAILED: PAYMENT_FAILED
+    WAIT_AUDIT: PAYMENT_WAIT_AUDIT
+
+  redact:
+    - secretCode
+    - additionalData
+    - senderMsisdn
+    - senderName
+    - senderClientId
+    - senderUserId
+    - senderWalletId
+    - senderAfterTotalBalance
+    - senderAfterAvailableBalance
+    - senderAfterHoldingBalance
+    - senderAfterReceivableBalance
+    - senderAfterDeferredBalance
+    - receiverMsisdn
+    - receiverName
+    - receiverClientId
+    - receiverUserId
+    - receiverWalletId
+    - receiverAfterTotalBalance
+    - receiverAfterAvailableBalance
+    - receiverAfterHoldingBalance
+    - receiverAfterReceivableBalance
+    - receiverAfterDeferredBalance

@@ -426,13 +426,34 @@ public class WorkflowSpec {
     }
 
     private static EventRole.Role toRole(String eventsKey) {
+        if (isRetryKey(eventsKey)) return EventRole.Role.RETRY;
         return switch (eventsKey) {
             case "started" -> EventRole.Role.STARTED;
             case "completed" -> EventRole.Role.COMPLETED;
             case "failed" -> EventRole.Role.FAILED;
-            case "retry" -> EventRole.Role.RETRY;
             default -> null;
         };
+    }
+
+    /** {@code retry}, or a named kind of it such as {@code retryNotConfigured}. */
+    private static boolean isRetryKey(String eventsKey) {
+        return eventsKey.startsWith("retry");
+    }
+
+    /**
+     * Whether this event repeats a step that declares its retries prove nothing.
+     *
+     * <p>Silence detection reads any event as the run being alive, which is right for a retry
+     * that is working toward an answer. ewallet's core re-inquires about a partner payment every
+     * two minutes for as long as it is unresolved, money held throughout, so a run that can never
+     * finish was never silent and never reported.
+     */
+    public boolean isRepeatWithoutProgress(String eventType) {
+        return classifyEvent(eventType)
+                .filter(role -> role.role() == EventRole.Role.RETRY)
+                .map(role -> allSteps().stream()
+                        .anyMatch(step -> role.stepId().equals(step.getId()) && step.isRetriesAreNotProgress()))
+                .orElse(false);
     }
 
     private static int rolePrecedence(EventRole.Role role) {
@@ -734,7 +755,9 @@ public class WorkflowSpec {
         return allSteps().stream()
                 .map(StepSpec::getEvents)
                 .filter(Objects::nonNull)
-                .map(events -> events.get("retry"))
+                .flatMap(events -> events.entrySet().stream())
+                .filter(entry -> isRetryKey(entry.getKey()))
+                .map(Map.Entry::getValue)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
@@ -975,6 +998,12 @@ public class WorkflowSpec {
          * different successor per outcome instead of only success-or-failure.
          */
         private Map<String, String> outcomes;
+
+        /** See {@link WorkflowSpec#isRepeatWithoutProgress}. Off unless a step declares it. */
+        private boolean retriesAreNotProgress;
+
+        public boolean isRetriesAreNotProgress() { return retriesAreNotProgress; }
+        public void setRetriesAreNotProgress(boolean retriesAreNotProgress) { this.retriesAreNotProgress = retriesAreNotProgress; }
 
         public Map<String, String> getOutcomes() { return outcomes; }
         public void setOutcomes(Map<String, String> outcomes) { this.outcomes = outcomes; }

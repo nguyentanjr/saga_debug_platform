@@ -1,0 +1,42 @@
+# Answers on ewallet-transfer-business. Meaning lives in transactionSubStatus (constants in
+# ewallet-transfer-common Constants); an unhold's answer has none and is read from its status.
+
+source:
+  name: ewallet-core-transfer-replies
+  system: ewallet-core-transfer
+  topicPattern: 'staging-ewallet-transfer-business-v2'
+
+  fields:
+    eventId: null
+    eventTime: null
+    stepName: null
+    executionId: orderId
+    aliasKey: accountingTransactionId
+    businessKey: orderId
+    eventType: [transactionSubStatus, 'join:eventType+transactionStatus']
+    serviceName: const:ewallet-transfer-business
+
+  eventTypes:
+    W2N_Holding_Success: W2N_HOLD_SUCCEEDED
+    W2N_Holding_Failed: W2N_HOLD_FAILED
+    'W2N_(Holding_Timeout|Waiting_Audit_Holding)': W2N_HOLD_PENDING
+    W2N_Release_Success: W2N_RELEASE_SUCCEEDED
+    W2N_Release_Failed: W2N_RELEASE_FAILED
+    'W2N_(Release_Timeout|Waiting_Audit_Release)': W2N_RELEASE_PENDING
+    W2O_Holding_Failed: W2O_HOLD_FAILED
+    'W2O_(Holding_Timeout|Waiting_Audit_Holding)': W2O_HOLD_PENDING
+    W2O_Release_Success: W2O_SEND_SUCCEEDED
+    'W2O_(Release_Failed|Credit_O_Failed|Partner_Reception_Failed)': W2O_SEND_FAILED
+    'W2O_(RELEASE_TIMEOUT|Credit_O_Timeout.*|Waiting_.*|Unknow_Error_Mapping)': W2O_SEND_PENDING
+    'W2[NO]_Unholding_Success': UNHOLD_SUCCEEDED
+    'W2[NO]_Unholding(_Full)?_Failed': UNHOLD_FAILED
+    'UH:SUC': UNHOLD_SUCCEEDED
+    'UH:FAI': UNHOLD_FAILED
+
+  redact:
+    - secretCode
+    - fromWallets
+    - toWallets
+    - payerRequestId
+    - payeeRequestId
+    - switchRequestId

@@ -1,0 +1,68 @@
+# Agent cash out from bank (NMB/CRDB). Two commands, with the customer's decision between them:
+#
+#   HOLD_MONEY ─► AWAIT_WITHDRAWAL ─ secret code entered ─► RELEASE_MONEY ─► COMPLETED
+#       │                 │                                      │
+#       ▼                 └─ expiry job ─► UNHOLD_MONEY ◄────────┘ (release failed)
+#     FAILED                                    │
+#                                               ▼
+#                                          COMPENSATED
+#
+# The secret code is a new transfer order (TransferOrderServiceImpl, delivery money flow), a TRQ of
+# sub type AGENT_TO_RECEIVER naming the hold as originalTransactionId. The expiry job
+# (handleRefundExpiredWithdrawalJob) sends an optional RM for fee and tax, then UH, both marked
+# transactionType REFUND_EXPIRY_WITHDRAWAL. So neither RM nor UH alone says which way it went.
+#
+# AWAIT_WITHDRAWAL's timeout is for the expiry job not coming: holds expire after a configured
+# time, about 5m on staging, on a job that took 5m58s in the one run seen (6305546441882781). A hold
+# with neither outcome after 10m is money stuck. That figure is a judgment call and must exceed
+# the configured expiry where this runs.
+
+workflow:
+  name: EWALLET_W2N_TRANSFER
+  version: "0.4"
+  sources: [ewallet-core-transfer]
+
+  steps:
+    - id: HOLD_MONEY
+      service: ewallet-transfer-management
+      timeout: 30s
+      compensation: UNHOLD_MONEY
+      events:
+        started: W2N_REQUESTED
+        completed: W2N_HOLD_SUCCEEDED
+        failed: W2N_HOLD_FAILED
+        retry: W2N_HOLD_PENDING
+
+    - id: AWAIT_WITHDRAWAL
+      service: customer
+      timeout: 10m
+      outcomes:
+        SECRET_CODE_ENTERED: W2N_SECRET_CODE_ENTERED
+        EXPIRED: W2N_EXPIRED
+
+    - id: RELEASE_MONEY
+      service: ewallet-transfer-management
+      timeout: 15m
+      events:
+        completed: W2N_RELEASE_SUCCEEDED
+        failed: W2N_RELEASE_FAILED
+        retry: W2N_RELEASE_PENDING
+
+  compensationSteps:
+    - id: UNHOLD_MONEY
+      service: ewallet-transfer-management
+      timeout: 15m
+      events:
+        started: UNHOLD_STARTED
+        completed: UNHOLD_SUCCEEDED
+        failed: UNHOLD_FAILED
+
+  transitions:
+    - {from: STARTED, to: HOLD_MONEY}
+    - {from: HOLD_MONEY, to: AWAIT_WITHDRAWAL, condition: SUCCESS}
+    - {from: HOLD_MONEY, to: FAILED, condition: FAILED}
+    - {from: AWAIT_WITHDRAWAL, to: RELEASE_MONEY, condition: SECRET_CODE_ENTERED}
+    - {from: AWAIT_WITHDRAWAL, to: UNHOLD_MONEY, condition: EXPIRED}
+    - {from: RELEASE_MONEY, to: COMPLETED, condition: SUCCESS}
+    - {from: RELEASE_MONEY, to: COMPENSATING, condition: FAILED}
+    - {from: UNHOLD_MONEY, to: COMPENSATED, condition: SUCCESS}

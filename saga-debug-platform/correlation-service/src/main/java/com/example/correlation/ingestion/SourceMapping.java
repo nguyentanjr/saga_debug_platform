@@ -337,6 +337,13 @@ public class SourceMapping {
     public static final String HEADER_PREFIX = "header:";
     public static final String CONST_PREFIX = "const:";
 
+    /**
+     * Several fields read as one value, {@code join:data.cmd+data.response.status}, parts that
+     * are absent left out. For a source whose meaning needs two of them: ewallet's core payment
+     * replies SUCCESS_DEDUCT to both its hold and its settlement, and only the command says which.
+     */
+    public static final String JOIN_PREFIX = "join:";
+
 
     /** The first of these paths that resolves to a value. */
     Optional<String> resolve(JsonNode payload, RawObservation observation, List<String> paths) {
@@ -379,6 +386,13 @@ public class SourceMapping {
         if (path.startsWith(CONST_PREFIX)) {
             return blankToEmpty(path.substring(CONST_PREFIX.length()));
         }
+        if (path.startsWith(JOIN_PREFIX)) {
+            List<String> parts = new ArrayList<>();
+            for (String part : path.substring(JOIN_PREFIX.length()).split("\\+")) {
+                resolve(payload, observation, part).ifPresent(parts::add);
+            }
+            return blankToEmpty(String.join(":", parts));
+        }
         return read(payload, path);
     }
 
@@ -411,6 +425,11 @@ public class SourceMapping {
         for (String segment : path.split("\\.")) {
             if (cursor != null && cursor.isTextual()) {
                 cursor = parseEmbedded(cursor.asText());
+            }
+            // A numeric segment indexes an array: data.response.paymentSources.0.status.
+            if (cursor != null && cursor.isArray() && segment.matches("\\d+")) {
+                cursor = cursor.get(Integer.parseInt(segment));
+                continue;
             }
             if (cursor == null || !cursor.has(segment)) {
                 return Optional.empty();

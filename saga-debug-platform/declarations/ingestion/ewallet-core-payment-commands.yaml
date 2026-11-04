@@ -1,0 +1,30 @@
+# The event backbone's commands: a step of EWALLET_CORE_PAYMENT being asked for. A command seen
+# on the backbone's own topic and again on the service's is the same step started twice over,
+# which is harmless. Topic names are staging's. Only the fields read here are kept: the request
+# body carries customer identity and is not needed to judge a run.
+
+source:
+  name: ewallet-core-payment-commands
+  system: ewallet-core-payment
+  topicPattern: 'PMT\.(EVENT-BACKBONE|PAYMENT-SOURCE|PAYMENT-MERCHANT)\.CMD-WALLET3-V2-STAGING'
+
+  fields:
+    eventId: data.messageId
+    executionId: data.paymentId
+    eventType: data.cmd
+    eventTime: null
+    stepName: null
+    businessKey: null
+    serviceName: const:ewallet-payment-event-backbone-v2
+
+  eventTypes:
+    'YEU_CAU_THANH_TOAN(_USSD)?': AUTHORIZE_STARTED
+    'XAC_NHAN_THANH_TOAN(_USSD|_SIM|_PAYMENT_1STEP)?': HOLD_STARTED
+    YEU_CAU_GACH_NO: PARTNER_STARTED
+    'TRUY_VAN_GACH_NO\w*': PARTNER_PENDING
+    XAC_NHAN_THANH_TOAN_B2: SETTLE_STARTED
+    YEU_CAU_REVERT: RELEASE_STARTED
+
+  redact:
+    - data.request
+    - data.signature

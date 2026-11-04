@@ -762,7 +762,7 @@ public class AnomalyDetectionService {
             // latest source stamp. Under backlog the run's newest-stamped event can have been
             // read minutes before an earlier-stamped one that arrived just now (bench 2000 ev/s:
             // SAGA_STUCK 70 ms after ORDER_CREATED was read, "silent since" PAYMENT_REFUNDED).
-            SagaEvent lastEvent = stored.stream()
+            SagaEvent lastEvent = withoutEmptyRepeats(workflow, stored).stream()
                     .max(Comparator.comparing(AnomalyDetectionService::lastHeardAt))
                     .orElse(null);
             if (lastEvent == null) continue;
@@ -815,6 +815,12 @@ public class AnomalyDetectionService {
     }
 
 
+    /** The events that say a run moved, for a step that declares its retries do not. */
+    private static List<SagaEvent> withoutEmptyRepeats(WorkflowSpec workflow, List<SagaEvent> events) {
+        if (workflow == null) return events;
+        return events.stream().filter(e -> !workflow.isRepeatWithoutProgress(e.getEventType())).toList();
+    }
+
     /**
      * The steps the run waits on after its latest observation the workflow can place.
      * Observations it cannot place say nothing about which step is in progress. Falls back
@@ -859,8 +865,9 @@ public class AnomalyDetectionService {
      * finding prove nothing about the silence that followed them (FTGO kitchen-stop: a
      * neighbour already in hand withdrew a real 64 s stall).
      */
-    public void withdrawDisprovenSilence(WorkflowSpec workflow, String sagaId, List<SagaEvent> inOrder) {
+    public void withdrawDisprovenSilence(WorkflowSpec workflow, String sagaId, List<SagaEvent> observed) {
         if (!anomalyRepository.existsBySagaIdAndAnomalyType(sagaId, AnomalyType.SAGA_STUCK)) return;
+        List<SagaEvent> inOrder = withoutEmptyRepeats(workflow, observed);
         Instant now = Instant.now();
         for (Anomaly anomaly : anomalyRepository.findStandingBySagaId(sagaId)) {
             if (anomaly.getAnomalyType() != AnomalyType.SAGA_STUCK) continue;

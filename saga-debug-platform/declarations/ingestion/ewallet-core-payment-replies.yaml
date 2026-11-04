@@ -1,0 +1,52 @@
+# What each service answered the event backbone, and the later partner inquiries. An answer's
+# meaning is the command and the status together; the authorize reply keeps its status inside
+# paymentSources rather than at response.status. Only FAILED* is read as failure: any status
+# not listed stays unmapped, which says nothing about the run, rather than being guessed at.
+
+source:
+  name: ewallet-core-payment-replies
+  system: ewallet-core-payment
+  topicPattern: 'PMT\.(EVENT-BACKBONE|MERCHANT-SYNC)\.REPLY-WALLET3-V2-STAGING'
+
+  fields:
+    eventId: data.messageId
+    executionId: data.paymentId
+    eventType: join:data.cmd+data.response.status+data.response.paymentSources.0.status+data.response.errorCode
+    eventTime: null
+    stepName: null
+    businessKey: null
+    serviceName: const:ewallet-payment-event-backbone-v2
+
+  eventTypes:
+    'YEU_CAU_THANH_TOAN(_USSD)?:SUCCESS(:.*)?': AUTHORIZE_SUCCEEDED
+    'YEU_CAU_THANH_TOAN(_USSD)?:FAILED.*': AUTHORIZE_FAILED
+
+    'XAC_NHAN_THANH_TOAN(_USSD|_SIM|_PAYMENT_1STEP)?:SUCCESS_DEDUCT(:.*)?': HOLD_SUCCEEDED
+    'XAC_NHAN_THANH_TOAN(_USSD|_SIM|_PAYMENT_1STEP)?:FAILED.*': HOLD_FAILED
+    'XAC_NHAN_THANH_TOAN(_USSD|_SIM|_PAYMENT_1STEP)?:TIMEOUT.*': HOLD_TIMEOUT
+
+    '(YEU_CAU_GACH_NO|TRUY_VAN_GACH_NO\w*):.*:TP0023': PARTNER_NOT_CONFIGURED
+    '(YEU_CAU_GACH_NO|TRUY_VAN_GACH_NO\w*):SUCCESS(:.*)?': PARTNER_SUCCEEDED
+    '(YEU_CAU_GACH_NO|TRUY_VAN_GACH_NO\w*):FAILED.*': PARTNER_FAILED
+    '(YEU_CAU_GACH_NO|TRUY_VAN_GACH_NO\w*):(TIMEOUT|PROCESSING|AUDIT_MANUAL)(:.*)?': PARTNER_PENDING
+
+    'XAC_NHAN_THANH_TOAN_B2:SUCCESS_DEDUCT(:.*)?': SETTLE_SUCCEEDED
+    'XAC_NHAN_THANH_TOAN_B2:FAILED.*': SETTLE_FAILED
+    'XAC_NHAN_THANH_TOAN_B2:TIMEOUT.*': SETTLE_TIMEOUT
+
+    'YEU_CAU_REVERT:SUCCESS.*': RELEASE_SUCCEEDED
+    'YEU_CAU_REVERT:FAILED.*': RELEASE_FAILED
+
+  # status, errorCode and responseCode stay: they are what explains a failed step.
+  redact:
+    - data.signature
+    - data.eventData
+    - eventData
+    - data.response.paymentSources
+    - data.response.additionalData
+    - data.response.msisdn
+    - data.response.amount
+    - data.response.subId
+    - data.response.referenceField
+    - data.response.totalAvailable
+    - data.response.totalOutstanding

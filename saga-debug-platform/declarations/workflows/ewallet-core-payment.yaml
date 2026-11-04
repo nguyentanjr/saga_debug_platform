@@ -1,0 +1,105 @@
+# The core payment saga behind betting and other merchant payments, orchestrated by
+# ewallet-payment-event-backbone-v2 over CMD and REPLY topics.
+#
+# Read out of EventServiceImpl and the Reply*ServiceImpl classes, then checked against live
+# staging runs of 2026-11-02 (success 1793604093703, hold refused 1793603082182, partner
+# timeout 6305520061882222):
+#
+#   AUTHORIZE_MONEY ─► HOLD_MONEY ─► PAY_PARTNER ─► SETTLE_MONEY ─► PUBLISH_RESULT ─► COMPLETED
+#          │               │             │  ▲ timeout    │               ▲    └─────► FAILED
+#          │               │             ▼ └┘            │               │
+#          │               │         RELEASE_HOLD ───────┼───────────────┤
+#          └───────────────┴─────────────────────────────┴───────────────┘
+#
+# PUBLISH_RESULT alone ends a run. A refused hold is not the end of the story: the core still
+# has to publish the result the agent is waiting on, and a run that never does is the fault
+# worth reporting. That is also why RELEASE_HOLD is a forward step, not a compensation: a
+# compensation would end the run as COMPENSATED before that result arrives.
+#
+# A partner answer of TIMEOUT, PROCESSING or AUDIT_MANUAL stays on PAY_PARTNER as a retry. The
+# core then inquires on a schedule (seen every couple of minutes), so PAY_PARTNER's timeout is
+# how long that may go on before it is reported. It and RELEASE_HOLD's path are judgment calls:
+# no failed-partner run has been seen.
+#
+# The one-step payment (XAC_NHAN_THANH_TOAN_PAYMENT_1STEP) reads as HOLD_MONEY and reaches the
+# result with no partner or settlement step; the graph allows that, those steps being unobserved.
+# A result alone can also begin a run: an order refused at creation never reaches the backbone.
+
+workflow:
+  name: EWALLET_CORE_PAYMENT
+  version: "0.1"
+  sources: [ewallet-core-payment]
+
+  steps:
+    - id: AUTHORIZE_MONEY
+      service: ewallet-payment-source-v2
+      timeout: 30s
+      events:
+        started: AUTHORIZE_STARTED
+        completed: AUTHORIZE_SUCCEEDED
+        failed: AUTHORIZE_FAILED
+
+    - id: HOLD_MONEY
+      service: ewallet-payment-source-v2
+      timeout: 30s
+      events:
+        started: HOLD_STARTED
+        completed: HOLD_SUCCEEDED
+        failed: HOLD_FAILED
+        retry: HOLD_TIMEOUT
+
+    - id: PAY_PARTNER
+      service: ewallet-payment-merchant-v2
+      timeout: 15m
+      # The inquiries never stop on their own, so they cannot be what keeps a run looking alive:
+      # 15m after the partner was first called it is reported, money still held.
+      retriesAreNotProgress: true
+      events:
+        started: PARTNER_STARTED
+        completed: PARTNER_SUCCEEDED
+        failed: PARTNER_FAILED
+        retry: PARTNER_PENDING
+        # TP0023: ewallet-third-party has no API declared for this service. The core reports it
+        # as TIMEOUT and keeps inquiring, but no amount of waiting will answer it.
+        retryNotConfigured: PARTNER_NOT_CONFIGURED
+
+    - id: SETTLE_MONEY
+      service: ewallet-payment-source-v2
+      timeout: 30s
+      events:
+        started: SETTLE_STARTED
+        completed: SETTLE_SUCCEEDED
+        failed: SETTLE_FAILED
+        retry: SETTLE_TIMEOUT
+
+    - id: RELEASE_HOLD
+      service: ewallet-payment-source-v2
+      timeout: 15m
+      events:
+        started: RELEASE_STARTED
+        completed: RELEASE_SUCCEEDED
+        failed: RELEASE_FAILED
+
+    - id: PUBLISH_RESULT
+      service: ewallet-payment-order-v2
+      timeout: 15m
+      events:
+        completed: PAYMENT_SUCCEEDED
+        failed: PAYMENT_FAILED
+        retry: PAYMENT_WAIT_AUDIT
+
+  transitions:
+    - {from: STARTED, to: AUTHORIZE_MONEY}
+    - {from: STARTED, to: PUBLISH_RESULT}
+    - {from: AUTHORIZE_MONEY, to: HOLD_MONEY, condition: SUCCESS}
+    - {from: AUTHORIZE_MONEY, to: PUBLISH_RESULT, condition: FAILED}
+    - {from: HOLD_MONEY, to: PAY_PARTNER, condition: SUCCESS}
+    - {from: HOLD_MONEY, to: PUBLISH_RESULT, condition: FAILED}
+    - {from: PAY_PARTNER, to: SETTLE_MONEY, condition: SUCCESS}
+    - {from: PAY_PARTNER, to: RELEASE_HOLD, condition: FAILED}
+    - {from: SETTLE_MONEY, to: PUBLISH_RESULT, condition: SUCCESS}
+    - {from: SETTLE_MONEY, to: PUBLISH_RESULT, condition: FAILED}
+    - {from: RELEASE_HOLD, to: PUBLISH_RESULT, condition: SUCCESS}
+    - {from: RELEASE_HOLD, to: PUBLISH_RESULT, condition: FAILED}
+    - {from: PUBLISH_RESULT, to: COMPLETED, condition: SUCCESS}
+    - {from: PUBLISH_RESULT, to: FAILED, condition: FAILED}

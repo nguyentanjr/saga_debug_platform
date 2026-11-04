@@ -1,0 +1,54 @@
+# What core transfer publishes to the agent. A second channel for an ending: a late release has
+# been seen only here. W2N_Holding_Success is left out because it repeats each time deliveryStatus
+# moves, up to after the run has ended, so it says nothing new. The payload's originalTransactionId
+# is the string "null" on a hold, so it is not declared as anything.
+
+source:
+  name: ewallet-core-transfer-result
+  system: ewallet-core-transfer
+  topicPattern: 'CORE-TRANSFER-TRANSACTION-RESULT'
+
+  fields:
+    eventId: null
+    eventTime: null
+    stepName: null
+    executionId: orderId
+    businessKey: orderId
+    eventType: transactionSubStatus
+    serviceName: eventSource
+
+  eventTypes:
+    W2N_Holding_Failed: W2N_HOLD_FAILED
+    W2N_Release_Success: W2N_RELEASE_SUCCEEDED
+    W2N_Release_Failed: W2N_RELEASE_FAILED
+    'W2N_(Release_Timeout|Waiting_Audit_Release)': W2N_RELEASE_PENDING
+    W2O_Holding_Failed: W2O_HOLD_FAILED
+    W2O_Release_Success: W2O_SEND_SUCCEEDED
+    'W2O_(Release_Failed|Credit_O_Failed|Partner_Reception_Failed)': W2O_SEND_FAILED
+    'W2O_(RELEASE_TIMEOUT|Credit_O_Timeout.*|Waiting_.*|Unknow_Error_Mapping)': W2O_SEND_PENDING
+    'W2[NO]_Unholding_Success': UNHOLD_SUCCEEDED
+    'W2[NO]_Unholding(_Full)?_Failed': UNHOLD_FAILED
+
+  redact:
+    - secretCode
+    - additionalData
+    - senderMsisdn
+    - senderName
+    - senderClientId
+    - senderUserId
+    - senderWalletId
+    - senderAfterTotalBalance
+    - senderAfterAvailableBalance
+    - senderAfterHoldingBalance
+    - senderAfterReceivableBalance
+    - senderAfterDeferredBalance
+    - receiverMsisdn
+    - receiverName
+    - receiverClientId
+    - receiverUserId
+    - receiverWalletId
+    - receiverAfterTotalBalance
+    - receiverAfterAvailableBalance
+    - receiverAfterHoldingBalance
+    - receiverAfterReceivableBalance
+    - receiverAfterDeferredBalance

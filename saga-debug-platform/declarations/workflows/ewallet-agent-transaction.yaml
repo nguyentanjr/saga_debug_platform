@@ -1,0 +1,49 @@
+# What ewallet-business-agent can be observed doing on a utilities transaction, written as a
+# specification this platform can check executions against. Payments have their own, finer
+# one: EWALLET_CORE_PAYMENT.
+#
+# Read out of the App*ServiceImpl confirm methods, TransactionResultConsumer,
+# TransactionPostProcessorRouter and TransactionStatusHandler:
+#
+#   init -> checkPolicy -> checkPin -> confirm ─► core ─► CORE-*-TRANSACTION-RESULT
+#                                                            │
+#                       WAIT_AUDIT (stays on the step) ◄─────┤
+#                                               SUCCESS ─────┼─► COMPLETED
+#                                                FAILED ─────┴─► FAILED
+#
+# Everything before the result is HTTP, Redis and the database, so none of it is declared:
+# confirm publishes nothing to Kafka. A run therefore first appears when its result arrives,
+# and a confirm the core never answers produces no execution at all. WAIT_AUDIT is the only
+# observation that leaves a run open, so it is the only case that can be reported stuck.
+#
+# Commission (on SUCCESS, for some service codes only) and the policy message (on FAILED)
+# are not steps: both are follow-up work the agent does after the outcome is decided, and
+# requiring commission would leave every service outside CommissionPostHandler's list
+# looking unfinished. No compensation either: the failure branch only releases policy
+# limits, and the timeout reversal message carries nothing that reports its result.
+
+workflow:
+  name: EWALLET_AGENT_TRANSACTION
+  version: "0.1"
+  sources: [ewallet-agent]
+
+  steps:
+    - id: CORE_TRANSACTION
+      service: ewallet-core
+      # How long a run may stay in WAIT_AUDIT before it is reported. A judgment call rather
+      # than a measured figure, kept equal to RELEASE_MONEY in EWALLET_W2N_TRANSFER.
+      timeout: 15m
+      events:
+        completed: TRANSACTION_SUCCEEDED
+        failed: TRANSACTION_FAILED
+        retry: TRANSACTION_WAIT_AUDIT
+
+  transitions:
+    - from: STARTED
+      to: CORE_TRANSACTION
+    - from: CORE_TRANSACTION
+      to: COMPLETED
+      condition: SUCCESS
+    - from: CORE_TRANSACTION
+      to: FAILED
+      condition: FAILED

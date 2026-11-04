@@ -1,0 +1,55 @@
+# The core's transaction results as ewallet-business-agent consumes them, read without
+# changing either system. Payload shape: vn.com.viettel.vds.base.dto.TransactionResultEvent.
+#
+# CORE-TRANSFER-TRANSACTION-RESULT is left out on purpose. The first mapping whose pattern
+# matches a topic wins, that topic is already read for EWALLET_W2N_TRANSFER, and it repeats
+# status=SUCCESS as deliveryStatus advances, which this mapping would read as a run acting
+# after its ending. CORE-PAYMENT-TRANSACTION-RESULT belongs to ewallet-core-payment-result.
+
+source:
+  name: ewallet-agent-result
+  system: ewallet-agent
+  topicPattern: 'CORE-UTILITIES-TRANSACTION-RESULT'
+
+  fields:
+    # The payload has no event id and no event time, so these fall back to the Kafka position
+    # and the record timestamp.
+    eventId: null
+    eventTime: null
+    stepName: null
+    # The key the agent itself joins results on (TransactionPostProcessorRouter).
+    executionId: requestId
+    aliasKey: transactionId
+    businessKey: orderId
+    eventType: status
+    serviceName: eventSource
+
+  eventTypes:
+    SUCCESS: TRANSACTION_SUCCEEDED
+    FAILED: TRANSACTION_FAILED
+    WAIT_AUDIT: TRANSACTION_WAIT_AUDIT
+
+  # Customer identity, balances and the cash-out secret: none of it is needed to judge a run.
+  redact:
+    - secretCode
+    - additionalData
+    - senderMsisdn
+    - senderName
+    - senderClientId
+    - senderUserId
+    - senderWalletId
+    - senderAfterTotalBalance
+    - senderAfterAvailableBalance
+    - senderAfterHoldingBalance
+    - senderAfterReceivableBalance
+    - senderAfterDeferredBalance
+    - receiverMsisdn
+    - receiverName
+    - receiverClientId
+    - receiverUserId
+    - receiverWalletId
+    - receiverAfterTotalBalance
+    - receiverAfterAvailableBalance
+    - receiverAfterHoldingBalance
+    - receiverAfterReceivableBalance
+    - receiverAfterDeferredBalance

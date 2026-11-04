@@ -46,14 +46,15 @@ class DeclaredVocabularyTest {
         for (File file : mappings) {
             @SuppressWarnings("unchecked")
             Map<String, Object> source = (Map<String, Object>) YAML.readValue(file, Map.class).get("source");
-            Optional<WorkflowSpec> workflow = workflowOf(source, workflows);
-            if (workflow.isEmpty()) continue;
-            checked.add(workflow.get().getName());
+            List<WorkflowSpec> candidates = workflowsOf(source, workflows);
+            if (candidates.isEmpty()) continue;
+            candidates.forEach(spec -> checked.add(spec.getName()));
             @SuppressWarnings("unchecked")
             Map<String, String> eventTypes = (Map<String, String>) source.getOrDefault("eventTypes", Map.of());
             for (String name : new TreeSet<>(eventTypes.values())) {
-                if (workflow.get().classifyEvent(name).isEmpty()) {
-                    unknown.add(file.getName() + ": " + name + " not in " + workflow.get().getName());
+                if (candidates.stream().allMatch(spec -> spec.classifyEvent(name).isEmpty())) {
+                    unknown.add(file.getName() + ": " + name + " not in "
+                            + candidates.stream().map(WorkflowSpec::getName).toList());
                 }
             }
         }
@@ -62,15 +63,20 @@ class DeclaredVocabularyTest {
         assertThat(unknown).isEmpty();
     }
 
-    private static Optional<WorkflowSpec> workflowOf(Map<String, Object> source, WorkflowRegistry workflows) {
+    /**
+     * The workflow the mapping names, or every workflow claiming its system: one system may run
+     * several (ewallet-core-transfer: W2N and W2O share topics), and a name need only be known
+     * to one of them.
+     */
+    private static List<WorkflowSpec> workflowsOf(Map<String, Object> source, WorkflowRegistry workflows) {
         Object declared = source.get("workflow");
-        if (declared != null) return workflows.byType(declared.toString());
+        if (declared != null) return workflows.byType(declared.toString()).stream().toList();
         Object system = source.get("system");
-        if (system == null) return Optional.empty();
+        if (system == null) return List.of();
         return workflows.workflowNames().stream()
                 .map(workflows::byType).flatMap(Optional::stream)
                 .filter(spec -> spec.getSources().contains(system.toString()))
-                .findFirst();
+                .toList();
     }
 
     /** The repository's declarations directory, whether surefire runs from the module or the root. */
