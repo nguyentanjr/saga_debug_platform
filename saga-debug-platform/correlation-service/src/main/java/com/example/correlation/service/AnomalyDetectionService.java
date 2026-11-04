@@ -69,13 +69,33 @@ public class AnomalyDetectionService {
      *                   n events cost O(n^2) row reads over its lifetime.
      */
     public void detectOutOfOrder(String sagaId, List<SagaEvent> sagaEvents) {
-        List<SagaEvent> events = sagaEvents.stream()
-                .sorted(Comparator.comparing(SagaEvent::getReceivedAt,
-                        Comparator.nullsLast(Comparator.naturalOrder())))
-                .toList();
-        if (events.size() < 2) return;
+        if (sagaEvents.size() < 2) return;
         if (anomalyRepository.existsBySagaIdAndAnomalyType(sagaId, AnomalyType.OUT_OF_ORDER)) return;
 
+        // Kafka orders records within a partition and nowhere else, so two events from different
+        // partitions arriving "backwards" is ordinary delivery, not a fault. Compared across them,
+        // the finding came and went with the order a replay happened to read the run in
+        // (A6305546441882781: business topic and result topic). Events with no transport position
+        // share one group, which keeps the previous reading for sources that record none.
+        Map<String, List<SagaEvent>> byPartition = new LinkedHashMap<>();
+        sagaEvents.stream()
+                .sorted(Comparator.comparing(SagaEvent::getReceivedAt,
+                        Comparator.nullsLast(Comparator.naturalOrder())))
+                .forEach(e -> byPartition.computeIfAbsent(partitionOf(e.getTransportRef()),
+                        key -> new ArrayList<>()).add(e));
+        for (List<SagaEvent> events : byPartition.values()) {
+            if (detectOutOfOrderWithin(sagaId, events)) return;
+        }
+    }
+
+    /** The {@code topic-partition} of a {@code topic-partition-offset} position, or "" without one. */
+    static String partitionOf(String transportRef) {
+        if (transportRef == null) return "";
+        int offsetDash = transportRef.lastIndexOf('-');
+        return offsetDash <= 0 ? "" : transportRef.substring(0, offsetDash);
+    }
+
+    private boolean detectOutOfOrderWithin(String sagaId, List<SagaEvent> events) {
         for (int i = 1; i < events.size(); i++) {
             SagaEvent previousEvent = events.get(i - 1);
             SagaEvent currentEvent = events.get(i);
@@ -100,9 +120,10 @@ public class AnomalyDetectionService {
                                 .thresholdSource("config:anomaly.detection.clock-skew-tolerance")
                                 .evidenceEvents(previousEvent, currentEvent)
                                 .measuredAt(currCreated));
-                return;
+                return true;
             }
         }
+        return false;
     }
 
 

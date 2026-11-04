@@ -117,6 +117,82 @@ class EwalletCoreTransferDeclarationTest {
         assertThat(standing(p)).isEmpty();
     }
 
+    /** Staging run A6305546441882781 (2026-11-02): read across three topics, in any order. */
+    private static final String[][] EXPIRED_CASH_OUT = {
+            {"W2N_REQUESTED", "2026-11-02T08:11:07.121Z", "staging-ewallet-transfer-management-v2-0-1340633"},
+            {"W2N_HOLD_SUCCEEDED", "2026-11-02T08:11:07.239Z", "staging-ewallet-transfer-business-v2-1-1176962"},
+            {"W2N_Holding_Success", "2026-11-02T08:11:07.273Z", "CORE-TRANSFER-TRANSACTION-RESULT-4-587857"},
+            {"W2N_Holding_Success", "2026-11-02T08:17:03.380Z", "CORE-TRANSFER-TRANSACTION-RESULT-4-587858"},
+            {"UNHOLD_STARTED", "2026-11-02T08:17:05.523Z", "staging-ewallet-transfer-management-v2-2-1183309"},
+            {"UNHOLD_SUCCEEDED", "2026-11-02T08:17:05.606Z", "staging-ewallet-transfer-business-v2-2-1186115"},
+            {"W2N_Holding_Success", "2026-11-02T08:17:05.635Z", "CORE-TRANSFER-TRANSACTION-RESULT-4-587859"},
+            {"UNHOLD_SUCCEEDED", "2026-11-02T08:17:05.636Z", "CORE-TRANSFER-TRANSACTION-RESULT-4-587860"}};
+
+    /** Staging run A6305571611880308 (2026-11-02): one request, two channels reporting its success. */
+    private static final String[][] TRANSFER_TO_BANK = {
+            {"W2O_REQUESTED", "2026-11-02T08:53:12.435Z", "staging-ewallet-transfer-management-w2o-28-0"},
+            {"W2O_SEND_SUCCEEDED", "2026-11-02T08:53:18.032Z", "staging-ewallet-transfer-business-v2-0-1348605"},
+            {"W2O_SEND_SUCCEEDED", "2026-11-02T08:53:18.054Z", "CORE-TRANSFER-TRANSACTION-RESULT-5-588010"}};
+
+    @Test
+    void anExpiredCashOutReadsTheSameInEveryDeliveryOrder() {
+        assertThat(findingsInEveryOrder("EWALLET_W2N_TRANSFER", EXPIRED_CASH_OUT, SagaStatus.COMPENSATED))
+                .containsExactly(List.of());
+    }
+
+    @Test
+    void aTransferToBankReadsTheSameInEveryDeliveryOrder() {
+        assertThat(findingsInEveryOrder("EWALLET_W2O_TRANSFER", TRANSFER_TO_BANK, SagaStatus.COMPLETED))
+                .containsExactly(List.of());
+    }
+
+    /** The distinct sets of standing findings over every delivery order; the status must not vary. */
+    private static java.util.Set<List<String>> findingsInEveryOrder(String workflow, String[][] events, SagaStatus expected) {
+        java.util.Set<List<String>> findings = new java.util.HashSet<>();
+        for (List<Integer> order : deliveryOrders(events)) {
+            ReplayPipeline p = new ReplayPipeline(workflows());
+            Instant received = Instant.now().minusSeconds(60);
+            for (int i : order) {
+                String[] e = events[i];
+                received = received.plusMillis(10);
+                p.deliver(List.of(new IngestedEvent(
+                        new IngestedEvent.Identity("ewallet-core-transfer", RUN, "e" + i, null, CorrelationBasis.DECLARED_KEY),
+                        workflow, e[0], null, "svc", Instant.parse(e[1]), "{}", received,
+                        IngestedEvent.Causality.NONE, e[2])));
+            }
+            assertThat(status(p)).as("order %s", order).isEqualTo(expected);
+            findings.add(standing(p).stream().map(Enum::name).sorted().toList());
+        }
+        return findings;
+    }
+
+    /**
+     * Eight orders Kafka could deliver: as recorded, reversed and six seeded shuffles, each then
+     * put back into offset order within every partition, which Kafka does guarantee.
+     */
+    private static List<List<Integer>> deliveryOrders(String[][] events) {
+        List<Integer> recorded = new java.util.ArrayList<>(java.util.stream.IntStream.range(0, events.length).boxed().toList());
+        List<List<Integer>> orders = new java.util.ArrayList<>(List.of(recorded));
+        List<Integer> reversed = new java.util.ArrayList<>(recorded);
+        java.util.Collections.reverse(reversed);
+        orders.add(reversed);
+        for (long seed = 1; seed <= 6; seed++) {
+            List<Integer> shuffled = new java.util.ArrayList<>(recorded);
+            java.util.Collections.shuffle(shuffled, new java.util.Random(seed));
+            orders.add(shuffled);
+        }
+        return orders.stream().map(order -> inPartitionOrder(order, events)).toList();
+    }
+
+    private static List<Integer> inPartitionOrder(List<Integer> order, String[][] events) {
+        java.util.function.Function<Integer, String> partition = i -> AnomalyDetectionService.partitionOf(events[i][2]);
+        java.util.function.ToLongFunction<Integer> offset = i -> Long.parseLong(events[i][2].substring(events[i][2].lastIndexOf('-') + 1));
+        java.util.Map<String, java.util.Deque<Integer>> byPartition = new java.util.HashMap<>();
+        order.stream().sorted(java.util.Comparator.comparingLong(offset))
+                .forEach(i -> byPartition.computeIfAbsent(partition.apply(i), k -> new java.util.ArrayDeque<>()).add(i));
+        return order.stream().map(i -> byPartition.get(partition.apply(i)).poll()).toList();
+    }
+
     @Test
     void aSuccessfulTransferToBankCompletes() {
         ReplayPipeline p = new ReplayPipeline(workflows());
