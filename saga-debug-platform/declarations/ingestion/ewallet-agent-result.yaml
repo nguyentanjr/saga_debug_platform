@@ -21,13 +21,16 @@ source:
     executionId: requestId
     aliasKey: transactionId
     businessKey: orderId
-    eventType: status
+    # Same payload as ewallet-core-payment-result, so a reconciliation transaction published under
+    # the original requestId (originalTransactionId set) is left unmapped here too. Its sub statuses
+    # are not read: no utilities result has been observed to say which of them are final.
+    eventType: join:status+originalTransactionId
     serviceName: eventSource
 
   eventTypes:
-    SUCCESS: TRANSACTION_SUCCEEDED
-    FAILED: TRANSACTION_FAILED
-    WAIT_AUDIT: TRANSACTION_WAIT_AUDIT
+    'SUCCESS(:null)?': TRANSACTION_SUCCEEDED
+    'FAILED(:null)?': TRANSACTION_FAILED
+    'WAIT_AUDIT(:null)?': TRANSACTION_WAIT_AUDIT
 
   # Customer identity, balances and the cash-out secret: none of it is needed to judge a run.
   redact:

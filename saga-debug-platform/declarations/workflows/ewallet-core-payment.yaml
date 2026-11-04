@@ -83,10 +83,15 @@ workflow:
     - id: PUBLISH_RESULT
       service: ewallet-payment-order-v2
       timeout: 15m
+      # A result still being worked on, or handed to manual audit, is not the run moving: one left
+      # there is reported 15m after it was last seen to move, not 15m after each republish.
+      retriesAreNotProgress: true
       events:
         completed: PAYMENT_SUCCEEDED
         failed: PAYMENT_FAILED
         retry: PAYMENT_WAIT_AUDIT
+        # Published again with the same status while revert or revenue posting runs.
+        retryPending: PAYMENT_RESULT_PENDING
 
   transitions:
     - {from: STARTED, to: AUTHORIZE_MONEY}

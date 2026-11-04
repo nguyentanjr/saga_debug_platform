@@ -1,5 +1,16 @@
 # The result the core publishes to the agent, which ends a run of EWALLET_CORE_PAYMENT. requestId
 # here is the paymentId on the backbone's topics. Payload: base TransactionResultEvent.
+#
+# status alone is not the ending. The core publishes the result again, same status, each time its
+# after-work moves (staging 2026-11-02..04, 85 runs): FAILED Payment_Service_Failed, then
+# Revert_Money_Failed, then Wait_Audit_Manual (Revert_Money_Failed). Read by status only, every
+# update looked like the run acting after its ending. transactionSubStatus says which: the
+# sub statuses below were always followed by another result, the rest never were.
+#
+# Reconciliation also publishes a new transaction (REC_Collect_Success, REC_Refund_Success) under
+# the original requestId, with originalTransactionId naming it. It is another transaction, so it
+# is left unmapped: kept with the run, read as nothing. A result of the run itself carries
+# originalTransactionId "null" or none. Sub statuses seen contain no ':', which the patterns use.
 
 source:
   name: ewallet-core-payment-result
@@ -12,13 +23,15 @@ source:
     stepName: null
     executionId: requestId
     businessKey: orderId
-    eventType: status
+    eventType: join:status+transactionSubStatus+originalTransactionId
     serviceName: eventSource
 
   eventTypes:
-    SUCCESS: PAYMENT_SUCCEEDED
-    FAILED: PAYMENT_FAILED
-    WAIT_AUDIT: PAYMENT_WAIT_AUDIT
+    '(SUCCESS|FAILED):(Payment_Service_Failed|Payment_Service_Timeout\(3rd\)|Revert_Money_Failed|Revenue_Money_[^:]*|Holding_Money_Timeout[^:]*|REC_Unholding_Success)(:null)?': PAYMENT_RESULT_PENDING
+    '[A-Z_]+:Wait_Audit_Manual[^:]*(:null)?': PAYMENT_WAIT_AUDIT
+    'SUCCESS(:[^:]*)?(:null)?': PAYMENT_SUCCEEDED
+    'FAILED(:[^:]*)?(:null)?': PAYMENT_FAILED
+    'WAIT_AUDIT(:[^:]*)?(:null)?': PAYMENT_WAIT_AUDIT
 
   redact:
     - secretCode

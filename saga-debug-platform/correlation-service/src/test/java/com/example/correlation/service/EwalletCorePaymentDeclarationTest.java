@@ -114,11 +114,108 @@ class EwalletCorePaymentDeclarationTest {
         assertThat(standing(old)).contains(AnomalyType.SAGA_STUCK);
     }
 
+    private static final String RESULTS = "CORE-PAYMENT-TRANSACTION-RESULT";
+
+    @Test
+    void aResultIsReadWithItsSubStatus() throws Exception {
+        assertThat(resultType("FAILED", "Payment_Service_Failed", "null")).contains("PAYMENT_RESULT_PENDING");
+        assertThat(resultType("FAILED", "Revert_Money_Failed", null)).contains("PAYMENT_RESULT_PENDING");
+        assertThat(resultType("SUCCESS", "Revenue_Money_OD_Failed (Step 2)", "null")).contains("PAYMENT_RESULT_PENDING");
+        assertThat(resultType("FAILED", "Wait_Audit_Manual (Revert_Money_Failed)", "null")).contains("PAYMENT_WAIT_AUDIT");
+        assertThat(resultType("WAIT_AUDIT", "Payment_Service_Timeout(3rd)", null)).contains("PAYMENT_WAIT_AUDIT");
+        assertThat(resultType("FAILED", "Revert_Money_Success", "null")).contains("PAYMENT_FAILED");
+        assertThat(resultType("SUCCESS", "Success", null)).contains("PAYMENT_SUCCEEDED");
+        assertThat(resultType("SUCCESS", null, null)).contains("PAYMENT_SUCCEEDED");
+        assertThat(resultType("FAILED", "REC_Collect_Success", "null")).contains("PAYMENT_FAILED");
+    }
+
+    @Test
+    void aReconciliationTransactionUnderTheSameRequestIdIsLeftUnmapped() throws Exception {
+        assertThat(resultType("SUCCESS", "REC_Collect_Success", "6263399800211511"))
+                .contains("SUCCESS:REC_Collect_Success:6263399800211511");
+        assertThat(type("CORE-UTILITIES-TRANSACTION-RESULT",
+                "{\"status\":\"SUCCESS\",\"originalTransactionId\":\"6263399800211511\"}"))
+                .contains("SUCCESS:6263399800211511");
+        assertThat(type("CORE-UTILITIES-TRANSACTION-RESULT",
+                "{\"status\":\"SUCCESS\",\"originalTransactionId\":\"null\"}")).contains("TRANSACTION_SUCCEEDED");
+        assertThat(type("CORE-UTILITIES-TRANSACTION-RESULT", "{\"status\":\"WAIT_AUDIT\"}"))
+                .contains("TRANSACTION_WAIT_AUDIT");
+    }
+
+    /** Staging 6307539372730592: one failed payment, its result published three times. */
+    @Test
+    void aResultRepublishedAsItsRevertMovesIsNoActivityAfterTheEnding() throws Exception {
+        ReplayPipeline p = deliver(0, "HOLD_STARTED", "HOLD_SUCCEEDED", "PARTNER_STARTED", "PARTNER_FAILED");
+        sendOn(p, RESULTS, resultType("FAILED", "Payment_Service_Failed", null).orElseThrow(),
+                resultType("FAILED", "Revert_Money_Failed", null).orElseThrow(),
+                resultType("FAILED", "Wait_Audit_Manual (Revert_Money_Failed)", null).orElseThrow());
+
+        assertThat(status(p).isTerminal()).isFalse();
+        assertThat(standing(p)).doesNotContain(AnomalyType.FORBIDDEN_POST_TERMINAL, AnomalyType.MULTI_TERMINAL_CONFLICT);
+    }
+
+    @Test
+    void aRevertThatSucceedsEndsTheRunOnce() throws Exception {
+        ReplayPipeline p = deliver(0, "HOLD_STARTED", "HOLD_SUCCEEDED", "PARTNER_STARTED", "PARTNER_FAILED");
+        sendOn(p, RESULTS, resultType("FAILED", "Payment_Service_Failed", "null").orElseThrow(),
+                resultType("FAILED", "Revert_Money_Success", "null").orElseThrow());
+
+        assertThat(status(p)).isEqualTo(SagaStatus.FAILED);
+        assertThat(standing(p)).isEmpty();
+    }
+
+    /** Staging 6263399800211511: the payment failed, then reconciliation collected it as a new transaction. */
+    @Test
+    void aReconciliationTransactionIsNoSecondOutcome() throws Exception {
+        ReplayPipeline p = deliver(0);
+        sendOn(p, RESULTS, resultType("FAILED", "REC_Collect_Success", "null").orElseThrow(),
+                resultType("SUCCESS", "REC_Collect_Success", "6263399800211511").orElseThrow());
+
+        assertThat(status(p)).isEqualTo(SagaStatus.FAILED);
+        assertThat(standing(p)).isEmpty();
+    }
+
+    /** Staging 1793611073159: a run left in audit is one silence, not one per republish. */
+    @Test
+    void anAuditResultDoesNotRestartTheSilenceClock() {
+        ReplayPipeline p = deliver(16 * 60, "AUTHORIZE_STARTED", "AUTHORIZE_SUCCEEDED", "HOLD_STARTED", "HOLD_SUCCEEDED",
+                "PARTNER_STARTED");
+        send(p, Instant.now().minusSeconds(30), p.events.size(), "PAYMENT_WAIT_AUDIT");
+
+        p.detector.detectStuckSagas();
+
+        assertThat(status(p)).isEqualTo(SagaStatus.IN_PROGRESS);
+        assertThat(p.anomalies).filteredOn(a -> a.getAnomalyType() == AnomalyType.SAGA_STUCK).hasSize(1);
+    }
+
+    private static java.util.Optional<String> resultType(String status, String subStatus, String original) throws Exception {
+        com.fasterxml.jackson.databind.node.ObjectNode json = new ObjectMapper().createObjectNode().put("status", status);
+        if (subStatus != null) json.put("transactionSubStatus", subStatus);
+        if (original != null) json.put("originalTransactionId", original);
+        return type(RESULTS, json.toString());
+    }
+
+    private static void sendOn(ReplayPipeline p, String topic, String... types) {
+        int offset = p.events.size();
+        Instant from = Instant.now().plusSeconds(1);
+        for (int i = 0; i < types.length; i++) {
+            Instant at = from.plusMillis(i * 100L);
+            p.deliver(List.of(new IngestedEvent(
+                    new IngestedEvent.Identity("ewallet-core-payment", RUN, "e" + (offset + i), null, CorrelationBasis.DECLARED_KEY),
+                    "EWALLET_CORE_PAYMENT", types[i], null, "svc", at, "{}", at, IngestedEvent.Causality.NONE,
+                    topic + "-0-" + (offset + i))));
+        }
+    }
+
     private static java.util.Optional<String> replyType(String json) throws Exception {
+        return type(REPLIES, json);
+    }
+
+    private static java.util.Optional<String> type(String topic, String json) throws Exception {
         SourceMappingRegistry registry = new SourceMappingRegistry();
         ReflectionTestUtils.setField(registry, "declarationsDirectory", declarations().toString());
         registry.load();
-        SourceMapping mapping = registry.forTopic(REPLIES);
+        SourceMapping mapping = registry.forTopic(topic);
         return mapping.eventType(new ObjectMapper().readTree(json), null);
     }
 
