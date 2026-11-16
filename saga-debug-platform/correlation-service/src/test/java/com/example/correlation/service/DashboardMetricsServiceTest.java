@@ -22,33 +22,22 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * L23: which step a finding is counted against on the dashboard.
- *
- * <p>The step used to be guessed: the token before the first dot of a {@code workflow:}
- * threshold source — which for INVALID_TRANSITION, MULTI_TERMINAL_CONFLICT and the
- * compensation findings is the <em>workflow's</em> name — or else a regex for anything
- * upper-case in the description, which found event names ("TAKE_PAYMENT_REQUESTED" on the
- * live hotel run). It now comes from a declared step timeout, or from the step the cited
- * events belong to, and a finding whose events span several steps is not counted.
- */
 class DashboardMetricsServiceTest {
-
     private static final Instant T0 = Instant.now().minusSeconds(600);
 
     @Test
     void aFindingIsCountedAgainstTheStepOfWhatItCitesNeverTheWorkflowOrAnEventName() {
         List<Anomaly> anomalies = List.of(
-                // workflow:ORDER_SAGA.transitions — the old parse counted "ORDER_SAGA" as a step
+
                 anomaly(AnomalyType.INVALID_TRANSITION, "workflow:ORDER_SAGA.transitions",
                         "Invalid transition: CREATE_ORDER -> PROCESS_PAYMENT", "e2"),
-                // no workflow source; the old regex took INVENTORY_RESERVED from the text
+
                 anomaly(AnomalyType.SAGA_STUCK, "config:anomaly.detection.default-step-timeout-seconds",
                         "Saga stuck: nothing heard since ... (last: INVENTORY_RESERVED)", "e3"),
-                // a declared step timeout names its step directly
+
                 anomaly(AnomalyType.STEP_TIMEOUT, "workflow:PROCESS_PAYMENT.timeout",
                         "Step 'PROCESS_PAYMENT' took 12000ms", "e1", "e2"),
-                // cites two steps: which one it is "about" is not established, so not counted
+
                 anomaly(AnomalyType.OUT_OF_ORDER, null,
                         "Event 'PAYMENT_FAILED' arrived after 'INVENTORY_RESERVED'", "e2", "e3"));
 
@@ -60,11 +49,6 @@ class DashboardMetricsServiceTest {
                 .singleElement().extracting(MetricItem::count).isEqualTo(2L);
     }
 
-    /**
-     * L25: a finding the platform has withdrawn — later observations showed it was not true
-     * of the run — is not an anomaly of the run, and the RCA already never reads it. The
-     * dashboard counted it anyway, because its window query does not filter retractions.
-     */
     @Test
     void aWithdrawnFindingIsNotCountedAsAnAnomaly() {
         Anomaly standing = anomaly(AnomalyType.STEP_TIMEOUT, "workflow:PROCESS_PAYMENT.timeout",

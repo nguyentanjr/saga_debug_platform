@@ -16,13 +16,10 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ExecutionProjectionServiceTest {
-
     private static final Instant T0 = Instant.parse("2026-01-01T00:00:00Z");
 
     private final ExecutionProjectionService service = new ExecutionProjectionService();
     private final WorkflowSpec spec = WorkflowSpecTestFixture.orderSaga();
-
-    // ── The property the legacy adjacency measurement violates ────────────────
 
     @Test
     void unmappedEventDoesNotChangeOperationTiming() {
@@ -63,7 +60,6 @@ class ExecutionProjectionServiceTest {
                 event("e4", "PAYMENT_RETRY", "payment-service", T0.plusSeconds(9)),
                 event("e5", "PAYMENT_FAILED", "payment-service", T0.plusSeconds(11))));
 
-        // The whole operation took 11s, not the 2s between the last retry and the failure.
         assertThat(payment.duration().toSeconds()).isEqualTo(11);
         assertThat(payment.attemptCount()).isEqualTo(4);
         assertThat(payment.outcome()).isEqualTo(OperationOutcome.FAILED);
@@ -101,12 +97,8 @@ class ExecutionProjectionServiceTest {
         assertThat(summarize(reversed)).isEqualTo(summarize(inOrder));
     }
 
-    // ── Honest handling of absent evidence ────────────────────────────────────
-
     @Test
     void operationWithoutStartReferenceHasNoDuration() {
-        // INVENTORY_RESERVED with no preceding payment observation: the start of
-        // RESERVE_INVENTORY cannot be established from what was observed.
         ExecutionProjection projection = project(List.of(
                 event("e1", "INVENTORY_RESERVED", "inventory-service", T0.plusSeconds(30))));
 
@@ -128,7 +120,6 @@ class ExecutionProjectionServiceTest {
 
     @Test
     void observedStartIsUsedWhenTheWorkflowDeclaresOne() {
-        // The compensation step declares distinct started/completed event types.
         ExecutionProjection projection = project(List.of(
                 event("e1", "ORDER_CREATED", "order-service", T0),
                 event("e2", "PAYMENT_COMPLETED", "payment-service", T0.plusSeconds(1)),
@@ -160,8 +151,6 @@ class ExecutionProjectionServiceTest {
         assertThat(projection.operations()).isEmpty();
         assertThat(projection.unmappedEvents()).hasSize(1);
     }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private ExecutionProjection project(List<SagaEvent> events) {
         return service.project("saga-1", events, spec);

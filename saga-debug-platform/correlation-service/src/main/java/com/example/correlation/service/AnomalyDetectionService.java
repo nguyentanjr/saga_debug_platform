@@ -27,7 +27,6 @@ import java.util.stream.Collectors;
 
 @Service
 public class AnomalyDetectionService {
-
     private static final Logger log = LoggerFactory.getLogger(AnomalyDetectionService.class);
 
     private static final List<SagaStatus> RUNNING_STATUSES =
@@ -61,22 +60,10 @@ public class AnomalyDetectionService {
         this.executionProjectionService = executionProjectionService;
     }
 
-
-    /**
-     * @param sagaEvents every event of the saga, including the one just stored.
-     *                   Passed in rather than re-queried: the ingestion path used to
-     *                   reload the whole event list once per detector, so a saga with
-     *                   n events cost O(n^2) row reads over its lifetime.
-     */
     public void detectOutOfOrder(String sagaId, List<SagaEvent> sagaEvents) {
         if (sagaEvents.size() < 2) return;
         if (anomalyRepository.existsBySagaIdAndAnomalyType(sagaId, AnomalyType.OUT_OF_ORDER)) return;
 
-        // Kafka orders records within a partition and nowhere else, so two events from different
-        // partitions arriving "backwards" is ordinary delivery, not a fault. Compared across them,
-        // the finding came and went with the order a replay happened to read the run in
-        // (A6305546441882781: business topic and result topic). Events with no transport position
-        // share one group, which keeps the previous reading for sources that record none.
         Map<String, List<SagaEvent>> byPartition = new LinkedHashMap<>();
         sagaEvents.stream()
                 .sorted(Comparator.comparing(SagaEvent::getReceivedAt,
@@ -88,7 +75,6 @@ public class AnomalyDetectionService {
         }
     }
 
-    /** The {@code topic-partition} of a {@code topic-partition-offset} position, or "" without one. */
     static String partitionOf(String transportRef) {
         if (transportRef == null) return "";
         int offsetDash = transportRef.lastIndexOf('-');
@@ -102,7 +88,7 @@ public class AnomalyDetectionService {
             Instant prevCreated = previousEvent.getTimestamp();
             Instant currCreated = currentEvent.getTimestamp();
             Duration timeDiff = Duration.between(currCreated, prevCreated);
-            
+
             Duration clockSkewTolerance = detectionProperties.getClockSkewTolerance();
             if (currCreated.isBefore(prevCreated) && timeDiff.compareTo(clockSkewTolerance) > 0) {
                 createAnomaly(sagaId, AnomalyType.OUT_OF_ORDER,
@@ -126,21 +112,6 @@ public class AnomalyDetectionService {
         return false;
     }
 
-
-
-    /**
-     * A run that went somewhere its workflow does not allow.
-     *
-     * <p>Only a declared-and-contradicted transition is an anomaly. UNKNOWN covers two
-     * quite different silences and neither is a fault in the execution: the specification
-     * having nothing to say about this step, and the platform not having observed the steps
-     * that lie between these two. The second used to be reported as INVALID, which made an
-     * ordinary gap in delivery — a partition read late, a retry still in flight — into a
-     * standing accusation against the observed system. It is logged rather than filed,
-     * because an operator looking at a quiet run is entitled to know which observations the
-     * platform was waiting on.
-     */
-    /** @return whether the workflow forbids this handoff */
     public boolean detectInvalidTransition(WorkflowSpec workflow, String sagaId, String previousStep,
             String currentStep, String condition, String eventId, Instant eventTimestamp) {
         if (workflow == null || workflow.getTransitions() == null) return false;
@@ -159,8 +130,6 @@ public class AnomalyDetectionService {
         }
 
         {
-            // Every arrival re-judges every adjacent pair, so the same handoff reaches here
-            // again with each later observation. It is one occurrence and stands once (F14).
             String observed = String.format("%s -> %s on %s", previousStep, currentStep, condition);
             boolean alreadyStanding = anomalyRepository.findStandingBySagaId(sagaId).stream()
                     .anyMatch(a -> a.getAnomalyType() == AnomalyType.INVALID_TRANSITION
@@ -187,19 +156,6 @@ public class AnomalyDetectionService {
         return true;
     }
 
-    /**
-     * EXT-I9: withdraws the invalid transitions the whole evidence no longer shows.
-     *
-     * <p>A handoff is judged between neighbours in business order, and on a partial
-     * timeline two observations can be neighbours that the full one separates -- reverse
-     * delivery of a KMS both-failed run left INVALID_TRANSITION standing that forward
-     * delivery never raised. The occurrence was never established; the pair it rested on
-     * was an artefact of what had arrived. Findings for handoffs the final timeline still
-     * judges invalid are kept.
-     *
-     * @param stillInvalid {@link #transitionKey} of every handoff judged invalid on the
-     *                     current evidence
-     */
     public void withdrawUnjudgedTransitions(String sagaId, Set<String> stillInvalid) {
         Instant now = Instant.now();
         for (Anomaly anomaly : anomalyRepository.findStandingBySagaId(sagaId)) {
@@ -217,12 +173,10 @@ public class AnomalyDetectionService {
         }
     }
 
-    /** Identifies one judged handoff: what was observed, and the event that made it. */
     public static String transitionKey(String observedHandoff, String eventId) {
         return observedHandoff + "|" + eventId;
     }
 
-    /** The observed value an invalid transition is recorded under. */
     public static String handoff(String previousStep, String currentStep, String condition) {
         return String.format("%s -> %s on %s", previousStep, currentStep, condition);
     }
@@ -233,10 +187,6 @@ public class AnomalyDetectionService {
         if (events.size() < burstThreshold) return;
         if (anomalyRepository.existsBySagaIdAndAnomalyType(sagaId, AnomalyType.RETRY_BURST)) return;
 
-        // No PAYMENT_RETRY fallback: a workflow that declares no retry event does not
-        // have retries as far as this platform can tell, and borrowing the order saga's
-        // retry event name would attribute another workflow's events to a step it has no
-        // relationship with.
         Set<String> retryEventTypes = workflow != null ? workflow.retryEventTypes() : Set.of();
         if (retryEventTypes.isEmpty()) return;
 
@@ -270,16 +220,6 @@ public class AnomalyDetectionService {
         }
     }
 
-    /**
-     * States how the observed retry count compares with the step's declared attempt
-     * budget.
-     *
-     * <p>The engine-side burst threshold and the service's Resilience4j
-     * {@code maxAttempts} were chosen to match each other, so a firing RETRY_BURST does
-     * not by itself show that anything exceeded its policy. Recording both numbers in
-     * the evidence makes that visible to whoever reads the finding, instead of leaving
-     * "retry storm" to imply a violation that was never measured.
-     */
     private String retryPolicyNote(WorkflowSpec workflow, String retryEventType, int observedRetries) {
         if (workflow == null) return "";
 
@@ -298,20 +238,6 @@ public class AnomalyDetectionService {
         detectDuplicateEvent(sagaId, eventId, eventType, null, null);
     }
 
-    /**
-     * One event id, delivered by the source more than once.
-     *
-     * <p>The caller has already established that this is the observed system's doing and
-     * not this platform's: a re-read of one record never reaches here. The two transport
-     * references are carried into the evidence because they are what settles that
-     * question, and a reader who doubts the finding should be able to check it rather
-     * than take it on trust.
-     *
-     * @param storedOn  the record the stored copy arrived on, or null when unrecorded
-     * @param arrivedOn the record this copy arrived on, or null when the transport offers
-     *                  no identity — in which case the two cannot be compared and this
-     *                  keeps its previous meaning: the same event id was delivered again
-     */
     public void detectDuplicateEvent(String sagaId, String eventId, String eventType,
             String storedOn, String arrivedOn) {
         if (anomalyRepository.existsBySagaIdAndAnomalyType(sagaId, AnomalyType.EXACT_DUPLICATE_EVENT)) return;
@@ -334,23 +260,6 @@ public class AnomalyDetectionService {
                         .measuredAt(Instant.now()));
     }
 
-    /**
-     * A run that moved backwards through its own lifecycle.
-     *
-     * <p>Takes the pair the timeline found rather than a before-and-after pair of stored
-     * statuses. Those two things used to be conflated, and the difference is the whole
-     * finding: the stored status changes whenever a <em>read</em> lands on an event that
-     * implies something else, so an execution whose completion was read before its middle
-     * step produced COMPLETED → IN_PROGRESS and was reported for it. Nothing had regressed
-     * — the platform had read the run backwards and blamed the run.
-     *
-     * <p>{@link EvidenceTimeline} only ever offers a pair it can order from the evidence,
-     * and whose earlier half is terminal, so what arrives here is an observation that
-     * really did happen after the run had ended and contradicted that ending. The terminal
-     * requirement is what makes the finding safe to file as an occurrence claim on the
-     * partial evidence an observer always has: more observations cannot withdraw it, so it
-     * never has to be. See {@code EvidenceTimeline#firstRegression}.
-     */
     public void detectStateRegression(String sagaId, EvidenceTimeline.Regression regression) {
         if (regression == null) return;
 
@@ -368,23 +277,6 @@ public class AnomalyDetectionService {
                         .measuredAt(regression.later().getTimestamp()));
     }
 
-    /**
-     * An event that happened after the run had already ended.
-     *
-     * <p>Both events are required, and the caller establishes from the timeline that the
-     * terminal one provably precedes the late one. The previous version asked the stored
-     * status instead — "had the platform concluded this run was over by the time it got
-     * round to this event" — which is true of every event read after a completion,
-     * including the ones that happened before it. On a partition-shuffled stream that
-     * turned ordinary delivery reordering into a finding against the observed system.
-     *
-     * <p>The timeline selects the same pair for the same event set. A later delivery can
-     * reveal an earlier qualifying pair, so revise the standing finding's citation rather
-     * than freezing whichever prefix first proved the occurrence. This does not retract
-     * the occurrence or create another one. Only a changed citation advances detectedAt:
-     * it records detection of the revised evidence and lets the existing RCA sweep notice
-     * that its previous analysis is stale. measuredAt remains the cited business time.
-     */
     public void detectForbiddenPostTerminal(String sagaId, SagaStatus endedAs,
             SagaEvent terminalEvent, SagaEvent lateEvent) {
         if (endedAs == null || !endedAs.isTerminal() || terminalEvent == null || lateEvent == null) {
@@ -402,16 +294,6 @@ public class AnomalyDetectionService {
         raiseOrRevise(sagaId, AnomalyType.FORBIDDEN_POST_TERMINAL, description, evidence);
     }
 
-    /**
-     * One standing occurrence of {@code type} per run, citing what the whole evidence in hand
-     * selects rather than what the first prefix to prove the occurrence happened to contain.
-     *
-     * <p>F9 introduced this for FORBIDDEN_POST_TERMINAL; F11 found STATE_REGRESSION and
-     * MULTI_TERMINAL_CONFLICT still returning as soon as a finding existed, so their citation
-     * depended on delivery order. A changed citation advances detectedAt so the RCA sweep
-     * notices; an unchanged one writes nothing. A late alias merge can leave standing rows
-     * from both fragments, and each gets the canonical citation — none is deleted.
-     */
     private void raiseOrRevise(String sagaId, AnomalyType type, String description, AnomalyDetails evidence) {
         if (!anomalyRepository.existsBySagaIdAndAnomalyType(sagaId, type)) {
             createAnomaly(sagaId, type, description, evidence);
@@ -434,18 +316,6 @@ public class AnomalyDetectionService {
         }
     }
 
-    /**
-     * Two observations that could each be the run's last, with nothing to order them.
-     *
-     * <p>Raised instead of picking one. The pair carries the same instant and belongs to
-     * steps the workflow graph does not connect, so neither the clock nor the
-     * specification says which happened first — and they imply different outcomes, so the
-     * choice is the run's outcome. An observer that resolves this quietly publishes one of
-     * two mutually exclusive endings as fact.
-     *
-     * <p>An absence claim: it is about what the evidence lacks, so it is withdrawn like
-     * any other when more observations arrive.
-     */
     public void detectIndeterminateOrder(String sagaId, List<SagaEvent> contested) {
         if (contested == null || contested.size() < 2) return;
         if (anomalyRepository.existsBySagaIdAndAnomalyType(sagaId, AnomalyType.INDETERMINATE_ORDER)) return;
@@ -465,27 +335,15 @@ public class AnomalyDetectionService {
                         .measuredAt(lastTimestamp(contested)));
     }
 
-    /**
-     * Two contradictory terminal outcomes observed for one saga.
-     *
-     * <p>Was two hard-coded event sets naming the order saga's success and failure
-     * events. The question is now asked of the workflow: which observations imply a
-     * terminal status, and did this saga produce both a success and a non-success one.
-     */
     public void detectMultiTerminalConflict(WorkflowSpec workflow, String sagaId, List<SagaEvent> events) {
         if (workflow == null) return;
 
-        // Endings read against every branch of the run: a forward reply that arrived after
-        // compensation began is not a second outcome (ShopSaga, a payment reply after cancel).
         EvidenceTimeline timeline = EvidenceTimeline.of(workflow, events);
         List<SagaEvent> succeeded = timeline.endingsAs(SagaStatus.COMPLETED);
         List<SagaEvent> notSucceeded = new ArrayList<>(timeline.endingsAs(SagaStatus.FAILED));
         notSucceeded.addAll(timeline.endingsAs(SagaStatus.COMPENSATED));
 
         if (succeeded.isEmpty() || notSucceeded.isEmpty()) {
-            // Raised on a prefix where a reply read as the run's completion, before the
-            // compensation that preceded it arrived: the whole evidence no longer has two
-            // outcomes, so the claim is withdrawn rather than left to the read order.
             if (anomalyRepository.existsBySagaIdAndAnomalyType(sagaId, AnomalyType.MULTI_TERMINAL_CONFLICT)
                     && anomalyRepository.retractClaims(sagaId, Set.of(AnomalyType.MULTI_TERMINAL_CONFLICT),
                             Instant.now(), "read against every branch the run has one outcome; the other "
@@ -514,11 +372,7 @@ public class AnomalyDetectionService {
 
     public void detectDuplicateCompensation(WorkflowSpec workflow, String sagaId, List<SagaEvent> events) {
         if (workflow == null) return;
-        // Per compensation step. Two branches undone at once are two compensations, each
-        // started once. A request re-sent once the step's declared deadline passed unanswered
-        // is a retry (ShopSaga payment-stop re-sent the refund after its 30s deadline,
-        // 2026-10-22). Re-sent inside the deadline (SC23: 0.5s later), or after the step
-        // already completed, it is the duplicate. Events are in business order.
+
         Map<String, List<SagaEvent>> startsByStep = new LinkedHashMap<>();
         Set<String> completed = new HashSet<>();
         List<SagaEvent> compStartEvents = List.of();
@@ -554,49 +408,6 @@ public class AnomalyDetectionService {
         }
     }
 
-    /**
-     * "No event that starts this run's workflow has been observed."
-     *
-     * <h2>Two things this used to get wrong</h2>
-     * It was asked once, when the execution row was created, about the single event that
-     * created it. So it was really answering "was the first event I happened to read a
-     * start event" — a question about the observer's read order. And it was withdrawn only
-     * as a side effect of the workflow being resolved late, which coupled a claim about one
-     * kind of evidence to a change in another: where the workflow was already known — a
-     * source mapping that declares it — the start event could arrive, be stored, and the
-     * finding would go on saying it had not.
-     *
-     * <p>Now it is asked of the whole run, every time, and answered from the evidence: if
-     * an observed event starts this workflow the claim is false and is withdrawn; if none
-     * does it is true and is raised once.
-     *
-     * <h2>And it says which workflow</h2>
-     * The text named {@code ORDER_CREATED} and cited {@code workflow:ORDER_SAGA.start_event}
-     * whatever workflow the run belonged to, so a fulfillment saga was told it should have
-     * begun with an event no fulfillment saga emits. That is an assumption of this
-     * platform's, presented as the specification's requirement.
-     *
-     * @param events every observation of this run, the newest included
-     */
-    /**
-     * Withdraws MISSING_TERMINAL_EVENT once the run is observed to end.
-     *
-     * <p>The finding says no terminal event was seen; the ending falsifies it, and leaving
-     * it standing made a recovered run read as never having finished (SC16 lost R06, whose
-     * guard is the absence of this finding). SAGA_STUCK is not withdrawn here: a silence
-     * that happened at the source stays, and R06 is built on it -- only one the source's
-     * stamps disprove is ({@link #withdrawDisprovenSilence}).
-     */
-    /**
-     * Withdraws an ordering finding the whole evidence no longer establishes (F28).
-     *
-     * <p>FORBIDDEN_POST_TERMINAL and STATE_REGRESSION are occurrences, and an occurrence
-     * proven by a declared causal link stays proven: more events only add links. One proven
-     * only by clocks does not. When the event that sits causally between the pair arrives,
-     * the timeline may place the "late" observation before the ending after all, and the
-     * finding then describes the producers' clocks, not the run. It is withdrawn with that
-     * reason, as an absence claim is withdrawn when its evidence turns up.
-     */
     public void withdrawUnprovenOrder(String sagaId, AnomalyType type) {
         if (!anomalyRepository.existsBySagaIdAndAnomalyType(sagaId, type)) return;
         int withdrawn = anomalyRepository.retractClaims(sagaId, Set.of(type), Instant.now(),
@@ -619,7 +430,6 @@ public class AnomalyDetectionService {
         }
     }
 
-    /** Every event some loaded workflow declares as its start. */
     private Set<String> anyWorkflowStart() {
         return workflowRegistry.workflowNames().stream()
                 .map(workflowRegistry::byType).flatMap(Optional::stream)
@@ -628,17 +438,11 @@ public class AnomalyDetectionService {
     }
 
     public void detectOrphanEvent(WorkflowSpec workflow, String sagaId, List<SagaEvent> events) {
-        // EXT-RESOLVE: with no workflow resolved -- typically because two declarations both
-        // claim the start event -- the question is still whether any loaded workflow's start
-        // is in hand, as the finding's own wording says. Asking it of an empty set reported
-        // every unresolved run as orphaned, and R15 read that as a wrong correlation key on
-        // runs whose start record and key were both present.
         Set<String> startEventTypes = workflow != null ? workflow.startEventTypes() : anyWorkflowStart();
 
         boolean startObserved = events.stream()
                 .anyMatch(e -> startEventTypes.contains(e.getEventType()));
         if (startObserved) {
-            // Cheap: only asked when a start event is actually in hand, which happens once.
             if (anomalyRepository.existsBySagaIdAndAnomalyType(sagaId, AnomalyType.ORPHAN_EVENT)) {
                 int withdrawn = anomalyRepository.retractClaims(sagaId,
                         Set.of(AnomalyType.ORPHAN_EVENT), Instant.now(),
@@ -676,32 +480,9 @@ public class AnomalyDetectionService {
                         .measuredAt(earliest.getTimestamp()));
     }
 
-    
-
-
-    /**
-     * Reports an event that dropped the trace its siblings carry.
-     *
-     * <p>Reads the trace id from the column the source's mapping filled, not from a
-     * payload field named {@code traceId}. That name was this platform's own: a system
-     * keeping its trace id under {@code context.trace}, or in a {@code traceparent}
-     * header, had every event look untraced, and this detector went permanently silent
-     * for it while the RCA report lost its link to the traces.
-     *
-     * <p>Silence is still the right answer when <em>no</em> event of the saga reports a
-     * trace: that source does not publish trace context, which is a fact about the
-     * source and not a broken propagation. The anomaly is only for the case that is
-     * genuinely wrong — some events carry the trace and this one lost it.
-     */
     public void detectMissingTraceContext(String sagaId, List<SagaEvent> sagaEvents) {
         if (anomalyRepository.existsBySagaIdAndAnomalyType(sagaId, AnomalyType.MISSING_TRACE_CONTEXT)) return;
 
-        // Asked of the whole run rather than of the observation that has just arrived.
-        // It used to be handed only that one, and asked whether any sibling *already
-        // stored* carried a trace -- so reading the untraced event before its traced
-        // siblings meant no sibling had one yet, nothing was reported, and it was never
-        // looked at again. Whether propagation broke is a property of the run; which event
-        // arrived first is a property of the delivery.
         boolean sagaHasAnyTrace = sagaEvents.stream().anyMatch(AnomalyDetectionService::hasTrace);
         if (!sagaHasAnyTrace) return;
 
@@ -723,43 +504,11 @@ public class AnomalyDetectionService {
                         .measuredAt(untraced.getTimestamp()));
     }
 
-    /**
-     * Withdraws the findings about this execution that later evidence may have falsified.
-     *
-     * <p>A claim of absence — "no start event was seen", "this saga is stuck", "the
-     * compensation was never acknowledged" — is only ever true of the observations in hand.
-     * When the picture changes underneath it, leaving it standing means reporting something
-     * the platform now knows to be wrong, and deleting it means quietly removing a finding
-     * that was already shown to someone. Withdrawing keeps the row and the reason, and the
-     * scheduled passes raise it again if it still holds.
-     *
-     * @return how many findings were withdrawn
-     */
     public int retractAbsenceClaims(String sagaId, String reason) {
         return anomalyRepository.retractClaims(
                 sagaId, AnomalyType.absenceClaims(), Instant.now(), reason);
     }
 
-    /**
-     * The last moment this run can be said to have shown a sign of life.
-     *
-     * <p>"Stuck" is a claim that nothing has happened for a while, and the elapsed time was
-     * measured as {@code now - event.timestamp}: the observer's clock minus the source's.
-     * Any lag between the two became elapsed silence, so a backfill, a replay, or simply a
-     * source whose clock runs behind made every run it touched look stuck the instant it
-     * was ingested. Reproduced live: an ORDER_CREATED stamped ten minutes earlier and
-     * injected raised SAGA_STUCK within one scheduler pass, against a run whose event the
-     * platform had read a second before.
-     *
-     * <p>Whether the platform has heard anything is a question only the platform's own
-     * clock can answer, and {@code receivedAt} is where that answer is recorded. The
-     * source's stamp is not consulted at all here — not even as a tie-break. It says when
-     * the work happened, which is the right clock for durations between events and the
-     * wrong one for elapsed silence: a source stamping the past invents silence that never
-     * occurred, and one stamping the future conceals silence that did.
-     *
-     * <p>The stamp is still reported in the finding, so an operator can see both.
-     */
     private static Instant lastHeardAt(SagaEvent event) {
         return event.getReceivedAt() != null ? event.getReceivedAt() : event.getTimestamp();
     }
@@ -767,7 +516,6 @@ public class AnomalyDetectionService {
     private static boolean hasTrace(SagaEvent event) {
         return event != null && event.getTraceId() != null && !event.getTraceId().isBlank();
     }
-
 
     public void detectStuckSagas() {
         List<SagaInstance> runningSagas = sagaInstanceRepository.findByStatusIn(
@@ -779,24 +527,14 @@ public class AnomalyDetectionService {
             if (saga.hasWorkflowConflict()) continue;
             WorkflowSpec workflow = specFor(saga);
             List<SagaEvent> stored = sagaEventRepository.findBySagaIdOrderByTimestampAsc(saga.getSagaId());
-            // EXT-OVERLOAD-FALSE-FINDINGS: the last thing heard is the latest arrival, not the
-            // latest source stamp. Under backlog the run's newest-stamped event can have been
-            // read minutes before an earlier-stamped one that arrived just now (bench 2000 ev/s:
-            // SAGA_STUCK 70 ms after ORDER_CREATED was read, "silent since" PAYMENT_REFUNDED).
+
             SagaEvent lastEvent = withoutEmptyRepeats(workflow, stored).stream()
                     .max(Comparator.comparing(AnomalyDetectionService::lastHeardAt))
                     .orElse(null);
             if (lastEvent == null) continue;
 
-            // EXT-STUCK-TIMEOUT: silence is measured against the step the run is waiting on.
-            // That used to be the step of whatever event came last -- the step that had just
-            // finished, or, for an event the workflow does not know (ewallet COMMISSION_REQUESTED),
-            // the 60s default -- so every W2N transfer waiting its declared 15m for release was
-            // reported stuck after a minute. The clock still starts at the last thing heard.
             EvidenceTimeline timeline = workflow == null ? null : EvidenceTimeline.of(workflow, stored);
-            // EXT-OVERLOAD-FALSE-FINDINGS: the run list was read before this pass reached the
-            // run; an ingest in between can have ended it (bench 2000 ev/s: 15 SAGA_STUCK
-            // citing the run's own terminal event). An ended run awaits nothing.
+
             if (timeline != null && timeline.endedAt().isPresent()) continue;
             List<SagaEvent> inOrder = timeline == null ? List.of() : timeline.inBusinessOrder();
             List<String> awaited = awaitedSteps(workflow, inOrder);
@@ -806,11 +544,7 @@ public class AnomalyDetectionService {
                     : "workflow:" + String.join("|", awaited) + ".timeout";
 
             Instant lastHeardAt = lastHeardAt(lastEvent);
-            // EXT-STUCK-CITES-ARRIVAL: the clock starts at the latest arrival, but the finding is
-            // about where the run stopped, so it cites the latest observation the workflow places
-            // in business order -- the one the awaited step follows. Citing the latest arrival
-            // pinned FTGO accounting-pause on CREATE_TICKET, whose command was merely read a
-            // second after AUTHORIZE_REQUESTED although it happened before it.
+
             SagaEvent cited = lastPlaced(workflow, inOrder).orElse(lastEvent);
             if (lastHeardAt.plus(timeoutSeconds, ChronoUnit.SECONDS).isBefore(now)) {
                 boolean alreadyDetected = anomalyRepository.findStandingBySagaId(saga.getSagaId())
@@ -818,9 +552,6 @@ public class AnomalyDetectionService {
                         .anyMatch(a -> a.getAnomalyType() == AnomalyType.SAGA_STUCK
                                 && a.getDetectedAt().isAfter(lastHeardAt));
                 if (!alreadyDetected) {
-                    // "Nothing heard" was wrong whenever repeats kept arriving: 1793611073159 was
-                    // reported silent since 09:17:53 with PARTNER_PENDING read every two minutes
-                    // until 09:30. They are left out of the clock, so say how many were.
                     long ignored = stored.stream()
                             .filter(e -> workflow != null && workflow.isRepeatWithoutProgress(e.getEventType()))
                             .filter(e -> lastHeardAt(e).isAfter(lastHeardAt))
@@ -844,18 +575,11 @@ public class AnomalyDetectionService {
         }
     }
 
-
-    /** The events that say a run moved, for a step that declares its retries do not. */
     private static List<SagaEvent> withoutEmptyRepeats(WorkflowSpec workflow, List<SagaEvent> events) {
         if (workflow == null) return events;
         return events.stream().filter(e -> !workflow.isRepeatWithoutProgress(e.getEventType())).toList();
     }
 
-    /**
-     * The steps the run waits on after its latest observation the workflow can place.
-     * Observations it cannot place say nothing about which step is in progress. Falls back
-     * to that observation's own step when its outcome leads to no further step.
-     */
     private List<String> awaitedSteps(WorkflowSpec workflow, List<SagaEvent> inOrder) {
         return lastPlaced(workflow, inOrder).map(event -> {
             String type = event.getEventType();
@@ -864,7 +588,6 @@ public class AnomalyDetectionService {
         }).orElse(List.of());
     }
 
-    /** The latest observation, in business order, that the workflow places at a step. */
     private static Optional<SagaEvent> lastPlaced(WorkflowSpec workflow, List<SagaEvent> inOrder) {
         if (workflow == null) return Optional.empty();
         for (int i = inOrder.size() - 1; i >= 0; i--) {
@@ -880,21 +603,6 @@ public class AnomalyDetectionService {
                 .orElse(detectionProperties.getDefaultStepTimeoutSeconds());
     }
 
-    /**
-     * EXT-OVERLOAD-FALSE-FINDINGS: withdraws a SAGA_STUCK whose silence the run never had.
-     *
-     * <p>Silence is measured on the platform's clock, which is right for a source that has
-     * gone quiet and wrong for an observer that is behind: under backlog the next event sits
-     * unread in Kafka while the run is reported stuck (bench 1000 ev/s: 39 standing on runs
-     * that completed within a second). Only an observation read after the finding was made
-     * can settle it, and it does by the source's own stamps: if the earliest-stamped of those
-     * happened within the awaited step's timeout of the latest-stamped one the finding had in
-     * hand, the source never went quiet -- the reading did. A duration between two events of
-     * one run is what the source clock is right for. A real stall (stopped or paused service,
-     * R06/R25) shows the gap in the source stamps too and stays. Events read before the
-     * finding prove nothing about the silence that followed them (FTGO kitchen-stop: a
-     * neighbour already in hand withdrew a real 64 s stall).
-     */
     public void withdrawDisprovenSilence(WorkflowSpec workflow, String sagaId, List<SagaEvent> observed) {
         if (!anomalyRepository.existsBySagaIdAndAnomalyType(sagaId, AnomalyType.SAGA_STUCK)) return;
         List<SagaEvent> inOrder = withoutEmptyRepeats(workflow, observed);
@@ -920,11 +628,6 @@ public class AnomalyDetectionService {
         }
     }
 
-    /**
-     * EXT-OVERLOAD-FALSE-FINDINGS: withdraws COMPENSATION_MISSING once a compensation start
-     * is in hand. An absence claim, falsified by the event it says is absent -- which under
-     * backlog is simply still unread (bench 1000 ev/s: 61 standing on COMPENSATED runs).
-     */
     public void withdrawStartedCompensation(WorkflowSpec workflow, String sagaId, List<SagaEvent> events) {
         if (workflow == null) return;
         if (!anomalyRepository.existsBySagaIdAndAnomalyType(sagaId, AnomalyType.COMPENSATION_MISSING)) return;
@@ -937,8 +640,6 @@ public class AnomalyDetectionService {
     }
 
     public void detectStepTimeouts() {
-
-        
         Instant recentCutoff = Instant.now().minus(detectionProperties.getCompletedSagaLookback());
         List<SagaInstance> activeSagas = new ArrayList<>(
                 sagaInstanceRepository.findByStatusIn(IN_FLIGHT_STATUSES, detectionBatch()));
@@ -959,14 +660,6 @@ public class AnomalyDetectionService {
         }
     }
 
-    /**
-     * Loads the events for a batch of sagas in one query, dropping the ones that
-     * already carry {@code alreadyDetected}.
-     *
-     * <p>The scheduler loops used to issue two queries per saga per pass — an exists
-     * check and an event fetch — so a pass cost O(batch) round trips. This makes it
-     * two, regardless of batch size.
-     */
     private Map<String, List<SagaEvent>> eventsFor(List<SagaInstance> sagas, AnomalyType alreadyDetected) {
         if (sagas.isEmpty()) return Map.of();
 
@@ -982,12 +675,6 @@ public class AnomalyDetectionService {
                         LinkedHashMap::new, Collectors.toList()));
     }
 
-    /**
-     * Runs the configured step-timeout implementation for one saga.
-     *
-     * <p>Package-visible and repository-free apart from {@code createAnomaly} so the
-     * legacy and projection measurements can be compared directly in tests.
-     */
     void evaluateStepTimeouts(String sagaId, List<SagaEvent> events, WorkflowSpec workflow) {
         DetectionProperties.StepTimeoutMode mode = detectionProperties.getStepTimeoutMode();
 
@@ -1013,14 +700,6 @@ public class AnomalyDetectionService {
         }
     }
 
-    /**
-     * Legacy measurement: the gap between an event and its positional predecessor.
-     *
-     * <p>Kept intact while SHADOW mode gathers comparison data. Its known weakness is
-     * that any intervening observation — a retry event, or an event mapping to no step —
-     * becomes the measurement's start point, so the reported duration of a step depends
-     * on observations that are not part of that step.
-     */
     private StepTimeoutFinding findStepTimeoutByAdjacency(List<SagaEvent> events, WorkflowSpec workflow) {
         for (int i = 1; i < events.size(); i++) {
             SagaEvent previousEvent = events.get(i - 1);
@@ -1050,14 +729,6 @@ public class AnomalyDetectionService {
         return null;
     }
 
-    /**
-     * Projection measurement: an operation's duration from its start reference to its
-     * terminal observation, with retries folded into the same operation.
-     *
-     * <p>Operations whose start could not be established are skipped rather than
-     * measured against a substitute boundary — absence of evidence is reported as
-     * absence, not as a fast step.
-     */
     private StepTimeoutFinding findStepTimeoutByProjection(String sagaId, List<SagaEvent> events,
             WorkflowSpec workflow) {
         ExecutionProjection projection = executionProjectionService.project(sagaId, events, workflow);
@@ -1067,8 +738,6 @@ public class AnomalyDetectionService {
             int expectedTimeoutMs = workflow.getStepTimeoutSeconds(op.stepId()) * 1000;
             if (durationMs <= expectedTimeoutMs) continue;
 
-            // Two provenances, kept apart: startProvenance says which observation bounds the
-            // step, the clocks say where each bound's timestamp came from (F12).
             String provenance = op.startProvenance().name();
             SagaEvent start = byId(events, op.startEventId());
             SagaEvent end = byId(events, op.endEventId());
@@ -1109,19 +778,11 @@ public class AnomalyDetectionService {
         }
     }
 
-    /**
-     * Where the two timestamps a duration spans came from (F6 records it per event).
-     *
-     * <p>A label, not a verdict: DECLARED→DECLARED is still two services' own clocks, and a
-     * mixed or unrecorded pair can still be right. What changes is that the reader is not
-     * left to assume one clock when there may be two. Tier and threshold are untouched.
-     */
     static String clocks(SagaEvent from, SagaEvent to) {
         return clocks(from != null ? from.getEventTimeSource() : null,
                 to != null ? to.getEventTimeSource() : null);
     }
 
-    /** Same label, from the two origins directly; null means not recorded or not established. */
     static String clocks(EventTimeSource a, EventTimeSource b) {
         if (a == null || b == null) return "clocks=unrecorded";
         return "clocks=" + a + "->" + b + (a == b ? "" : " (mixed)");
@@ -1153,10 +814,6 @@ public class AnomalyDetectionService {
         int multiplier = detectionProperties.getMissingTerminalTimeoutMultiplier();
         Instant now = Instant.now();
 
-        // The query only narrows the candidates, so it takes the SHORTEST threshold any
-        // workflow can have; each run is then held to its own workflow's. It used to apply
-        // the longest step timeout across every loaded workflow to every run, so onboarding
-        // a system with a 120s step moved ORDER_SAGA's threshold from 100s to 1200s (F23).
         Instant cutoff = now.minus((long) minStepTimeoutAcrossWorkflows() * multiplier, ChronoUnit.SECONDS);
 
         List<SagaInstance> stuckSagas = sagaInstanceRepository.findByStatusInAndLastUpdatedBefore(
@@ -1170,10 +827,6 @@ public class AnomalyDetectionService {
             if (anomalyRepository.existsBySagaIdAndAnomalyType(
                     saga.getSagaId(), AnomalyType.MISSING_TERMINAL_EVENT)) continue;
 
-            // EXT-OVERLOAD-FALSE-FINDINGS: the run list was read before this pass reached the
-            // run; an ending ingested in between is withdrawn only by the next ending, which may
-            // never come (bench 2000 ev/s: MISSING_TERMINAL_EVENT standing on 4 COMPLETED runs,
-            // raised 0.1 s after their ending was read). Ask the evidence, as the stuck pass does.
             WorkflowSpec spec = specFor(saga);
             if (spec != null && EvidenceTimeline.of(spec,
                     sagaEventRepository.findBySagaIdOrderByTimestampAsc(saga.getSagaId())).endedAt().isPresent()) continue;
@@ -1183,8 +836,7 @@ public class AnomalyDetectionService {
                 SagaEvent lastEvent = sagaEventRepository
                         .findTopBySagaIdOrderByTimestampDesc(saga.getSagaId())
                         .orElse(null);
-                // The finding is raised once and not rewritten, so the count is stated as of now:
-                // 1793611073159 still read "18 events" with 40 stored two days later.
+
                 Instant detectedAt = Instant.now();
                 createAnomaly(saga.getSagaId(), AnomalyType.MISSING_TERMINAL_EVENT,
                         String.format("Saga had %d events at %s (when detected) but no terminal event after %ds",
@@ -1203,13 +855,11 @@ public class AnomalyDetectionService {
     public void detectCompensationMissing() {
         Instant cutoff = Instant.now().minus(detectionProperties.getCompensationMissingCutoff());
 
-        
-        
         List<SagaInstance> compensatingSagas = sagaInstanceRepository.findByStatusInAndLastUpdatedBefore(
                 List.of(SagaStatus.COMPENSATING), cutoff, detectionBatch());
 
         for (SagaInstance saga : compensatingSagas) {
-            if (saga.getLastUpdated().isAfter(cutoff)) continue; 
+            if (saga.getLastUpdated().isAfter(cutoff)) continue;
             if (anomalyRepository.existsBySagaIdAndAnomalyType(
                     saga.getSagaId(), AnomalyType.COMPENSATION_MISSING)) continue;
 
@@ -1237,32 +887,6 @@ public class AnomalyDetectionService {
         }
     }
 
-    /**
-     * Compensation that started, was declared to report completion, and has not.
-     *
-     * <h2>Why the declaration has to be consulted first</h2>
-     * This detector used to ask one question -- was a compensation completion event seen --
-     * and treat "no" as a fault. That reads an absence as evidence without first asking
-     * whether anything was ever going to fill it. One of the systems validated here settles
-     * the question: its {@code ROLLBACK_STOCK} declares a {@code started} event and no
-     * {@code completed} one, which is not an omission but the shape of that system. Every
-     * compensating run on it was therefore reported as unacknowledged, on every pass,
-     * permanently -- a finding about the platform's expectation wearing the observed
-     * system's name.
-     *
-     * <p>An absence claim needs the specification to say the event was owed (invariant
-     * I10). So the question is now asked per step, and only of steps whose declaration says
-     * they report completion. A step that never promised an acknowledgement cannot be
-     * missing one.
-     *
-     * <h2>What survives</h2>
-     * On a system that does declare the completion, nothing changes: a rollback that
-     * started and never reported back is still reported, with the same evidence. What is
-     * given up is the ability to notice a compensation stalling on a system that publishes
-     * no completion at all -- and that was never observable here, because the two cases
-     * look identical in the evidence. Noticing it would need something the declaration does
-     * not offer, not a stricter reading of silence.
-     */
     public void detectMissingCompensationAck() {
         Instant cutoff = Instant.now().minus(detectionProperties.getCompensationAckCutoff());
 
@@ -1295,13 +919,6 @@ public class AnomalyDetectionService {
         }
     }
 
-    /**
-     * Compensation starts whose step declares a completion and has not reported one.
-     *
-     * <p>Only the steps whose declaration owes an acknowledgement, and has not given one. A
-     * step that declares no completion is dropped here, silently and on purpose: there is
-     * nothing to report about a promise that was never made.
-     */
     private List<SagaEvent> owedAcknowledgements(WorkflowSpec workflow, List<SagaEvent> events) {
         Set<String> acknowledgedSteps = stepIdsOf(workflow, compensationEvents(
                 workflow, events, WorkflowSpec.EventRole.Role.COMPLETED));
@@ -1313,15 +930,6 @@ public class AnomalyDetectionService {
                 .toList();
     }
 
-    /**
-     * EXT-ACK: withdraws MISSING_COMPENSATION_ACK once the evidence holds every
-     * acknowledgement it said was missing.
-     *
-     * <p>An absence claim, withdrawn like the others when what it said was absent turns up.
-     * Only when nothing is still owed: one late acknowledgement does not answer for another
-     * compensation step that is still silent. The row is kept, with the reason, so the
-     * history of the run still shows that the acknowledgement was late.
-     */
     public void withdrawAcknowledgedCompensation(WorkflowSpec workflow, String sagaId, List<SagaEvent> events) {
         if (workflow == null) return;
         if (!anomalyRepository.existsBySagaIdAndAnomalyType(sagaId, AnomalyType.MISSING_COMPENSATION_ACK)) return;
@@ -1334,7 +942,6 @@ public class AnomalyDetectionService {
         }
     }
 
-    /** The steps a set of classified events belong to; events the workflow cannot place are dropped. */
     private Set<String> stepIdsOf(WorkflowSpec workflow, List<SagaEvent> events) {
         return events.stream()
                 .map(event -> workflow.classifyEvent(event.getEventType()).orElse(null))
@@ -1344,11 +951,8 @@ public class AnomalyDetectionService {
     }
 
     public void detectDelayedCompensation() {
-        
-        
         Instant recentCutoff = Instant.now().minus(detectionProperties.getCompensationRecentLookback());
 
-        
         List<SagaInstance> compensatedSagas = sagaInstanceRepository.findByStatusInAndLastUpdatedAfter(
                 List.of(SagaStatus.COMPENSATED, SagaStatus.COMPENSATING), recentCutoff, detectionBatch());
 
@@ -1362,7 +966,6 @@ public class AnomalyDetectionService {
             List<SagaEvent> events = sagaEventRepository
                     .findBySagaIdOrderByTimestampAsc(saga.getSagaId());
 
-            
             SagaEvent failureEvent = eventsWithRole(
                     workflow, events, WorkflowSpec.EventRole.Role.FAILED).stream()
                     .findFirst().orElse(null);
@@ -1372,8 +975,6 @@ public class AnomalyDetectionService {
 
             if (failureEvent == null || compensationStartEvent == null) continue;
 
-            // The budget is the compensation step's own declared timeout, looked up from
-            // the step the start event belongs to, rather than a fixed REFUND_PAYMENT.
             int compensationTimeoutSeconds = workflow
                     .classifyEvent(compensationStartEvent.getEventType())
                     .map(role -> workflow.getStepTimeoutSeconds(role.stepId()))
@@ -1400,20 +1001,10 @@ public class AnomalyDetectionService {
         }
     }
 
-    // ── Spec resolution and role-based event lookup ──────────────────────────
-    //
-    // The detectors below used to name the order saga's events directly
-    // ("INVENTORY_FAILED", "REFUND_PAYMENT", "PAYMENT_REFUNDED"). They now ask the
-    // saga's own workflow which of its events play those roles, so the same detector
-    // works for a workflow whose compensation is releasing a reservation or reversing
-    // a transfer.
-
-    /** The specification governing this saga, or null when none is registered. */
     private WorkflowSpec specFor(SagaInstance saga) {
         return saga.hasWorkflowConflict() ? null : workflowRegistry.byType(saga.getWorkflowType()).orElse(null);
     }
 
-    /** Events playing the given lifecycle role on any forward step. */
     private List<SagaEvent> eventsWithRole(WorkflowSpec workflow, List<SagaEvent> events,
             WorkflowSpec.EventRole.Role role) {
         return events.stream()
@@ -1423,7 +1014,6 @@ public class AnomalyDetectionService {
                 .toList();
     }
 
-    /** Events playing the given lifecycle role on any compensation step. */
     private List<SagaEvent> compensationEvents(WorkflowSpec workflow, List<SagaEvent> events,
             WorkflowSpec.EventRole.Role role) {
         return events.stream()
@@ -1440,13 +1030,6 @@ public class AnomalyDetectionService {
                 .collect(Collectors.joining(", "));
     }
 
-    /**
-     * The longest step timeout any registered workflow declares.
-     *
-     * <p>Used only where one cutoff has to bound a query across every workflow at once;
-     * taking the maximum keeps the query from excluding sagas of the slowest workflow.
-     */
-    /** The slowest step of one workflow; the default timeout when it is unknown. */
     private int maxStepTimeoutOf(WorkflowSpec spec) {
         if (spec == null || spec.getSteps() == null) return detectionProperties.getDefaultStepTimeoutSeconds();
         return spec.getSteps().stream()
@@ -1455,7 +1038,6 @@ public class AnomalyDetectionService {
                 .orElse(detectionProperties.getDefaultStepTimeoutSeconds());
     }
 
-    /** The smallest per-workflow threshold base, so a query bounded by it misses no run. */
     private int minStepTimeoutAcrossWorkflows() {
         return Math.min(detectionProperties.getDefaultStepTimeoutSeconds(),
                 workflowRegistry.workflowNames().stream()
@@ -1466,13 +1048,6 @@ public class AnomalyDetectionService {
                         .orElse(detectionProperties.getDefaultStepTimeoutSeconds()));
     }
 
-    /**
-     * Row cap and ordering for one scheduler pass.
-     *
-     * <p>A pass must cost what the recent work costs, not what the accumulated history
-     * costs. Newest-first ordering means that when a backlog exceeds the cap, the
-     * sagas most likely to still be actionable are the ones examined.
-     */
     private Pageable detectionBatch() {
         return PageRequest.of(0, detectionProperties.getDetectionBatchSize(),
                 Sort.by(Sort.Direction.DESC, "lastUpdated"));

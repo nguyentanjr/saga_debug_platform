@@ -32,15 +32,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * R10 and R11 used to cite no event, so they had no anchor and ranked below every anchored
- * candidate regardless of severity or of where their subject sits in the run. Measured on
- * the synthetic set (2026-09-28): SC23 promoted the duplicate delivery of the very request
- * R10 is about; SC24 promoted the delayed rollback's timeout over the forward failure the
- * rollback answered.
- */
 class CompensationAnchorTest {
-
     @Test
     void anUnacknowledgedCompensationOutranksTheDuplicateOfItsOwnRequest() {
         SagaEvent refund = event("e4", "REFUND_PAYMENT", "{}", 3);
@@ -75,7 +67,6 @@ class CompensationAnchorTest {
                 .singleElement().satisfies(c -> assertThat(c.getAnchorAt()).isEqualTo(failed.getTimestamp()));
     }
 
-    /** SC21: completed, then a failure for an earlier step. The failure did not end the run. */
     @Test
     void aFailureReportedAfterTheRunEndedIsNotTheStepsFailureClaim() {
         SagaEvent ended = event("e3", "INVENTORY_RESERVED", "{}", 2);
@@ -91,11 +82,6 @@ class CompensationAnchorTest {
         assertThat(result.getRuleId()).isEqualTo("R03");
     }
 
-    /**
-     * F21 / SC24: the delay cites the failure that triggered the rollback and the late
-     * rollback start. What it says is late is the rollback step, so that is where it
-     * anchors; anchored at the failure it tied with R11 and severity chose the delay.
-     */
     @Test
     void aLateRollbackIsAnchoredAtTheRollbackNotAtTheFailureThatTriggeredIt() {
         SagaEvent failed = event("e3", "INVENTORY_FAILED", "{}", 4);
@@ -112,7 +98,6 @@ class CompensationAnchorTest {
                 .singleElement().satisfies(c -> assertThat(c.getAnchorAt()).isEqualTo(refund.getTimestamp()));
     }
 
-    /** F25: a timeout measured until INVENTORY_RESERVED is RESERVE_INVENTORY's timeout. */
     @Test
     void aStepTimeoutIsAnchoredAtTheStepThatWasLate() {
         SagaEvent paid = event("e2", "PAYMENT_COMPLETED", "{}", 1);
@@ -127,8 +112,6 @@ class CompensationAnchorTest {
                     assertThat(c.getAnchorAt()).isEqualTo(reserved.getTimestamp());
                 });
     }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private static RcaResult analyze(SagaStatus status, List<Anomaly> standing, SagaEvent... events) {
         FailureSignalRegistry failureSignals = new FailureSignalRegistry("");

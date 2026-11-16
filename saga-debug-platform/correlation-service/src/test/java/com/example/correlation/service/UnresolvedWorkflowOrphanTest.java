@@ -26,17 +26,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * EXT-RESOLVE: a run whose workflow cannot be resolved is not thereby an orphan.
- *
- * <p>Eventuate retest (e7ec5b7, 2026-10-11): EVENTUATE_CREATE_ORDER and the unscoped
- * ORDER_SAGA both declare ORDER_CREATED, so the registry rightly refused to pick one. The
- * orphan check then asked for a start event out of an empty set, reported the run as
- * orphaned, and R15 promoted WRONG_SAGA_CORRELATION_KEY as STRONG on a run whose start
- * record and key were both in hand.
- */
 class UnresolvedWorkflowOrphanTest {
-
     private static final Instant T0 = Instant.parse("2026-10-11T23:39:00Z");
 
     private final List<Anomaly> raised = new ArrayList<>();

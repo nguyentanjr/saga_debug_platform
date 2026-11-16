@@ -13,15 +13,7 @@ import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * A rule id names one rule. The runtime-evidence rule was first written as R23, which
- * RETRY_EXHAUSTED already used, and nothing objected: candidates, alerts and the dashboard
- * would have shown one id for two different claims. Rule ids live in three places — rules
- * assessed in code, the declared YAML rules, and {@link ServiceDownRule} — so the check reads
- * all three.
- */
 class RuleIdUniquenessTest {
-
     private static final Pattern CODE_RULE =
             Pattern.compile("candidate\\(\\s*\"([A-Z_]+)\"\\s*,\\s*[^,]+,\\s*\"(R\\d+)\"");
     private static final Pattern YAML_RULE =

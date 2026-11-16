@@ -11,7 +11,6 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/dashboard")
 public class DashboardController {
-
     private final DashboardMetricsService dashboardMetricsService;
 
     public DashboardController(DashboardMetricsService dashboardMetricsService) {

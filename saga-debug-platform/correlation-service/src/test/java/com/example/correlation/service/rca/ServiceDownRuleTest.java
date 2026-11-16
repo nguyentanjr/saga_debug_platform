@@ -21,14 +21,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * R25: a crash is named only when the runtime reported the awaited step's service down
- * during a wait longer than the step allows. Shapes follow the evaluation scenarios that
- * stop inventory-service: SC04/SC16 (stopped, run waits, restarted, run completes) and
- * SC03/SC17 (stopped, run still waiting at analysis time).
- */
 class ServiceDownRuleTest {
-
     private static final Instant T0 = Instant.parse("2026-10-01T10:00:00Z");
     private WorkflowSpec workflow;
 
@@ -73,16 +66,6 @@ class ServiceDownRuleTest {
         assertThat(finding.get().explainedWait().closingEventId()).isNull();
     }
 
-    /**
-     * A wait belongs to the step awaited after the event that opened it, not to the step of
-     * the event that closed it (EXT-R25-MISS-KITCHEN). A source that does not publish every
-     * step's completion — an orchestrator seen only through its commands, or a completion
-     * event no mapping translates — closes the wait with a later step's event: here payment
-     * was down after ORDER_CREATED and the next thing heard is inventory starting. The old
-     * reading blamed RESERVE_INVENTORY's service and, finding it up, claimed nothing — but
-     * only once the run had ended; while it was still waiting the open-wait reading was
-     * right, so the result depended on when RCA happened to run.
-     */
     @Test
     void aWaitClosedByALaterStepsEventIsChargedToTheStepThatWasAwaited() {
         List<SagaEvent> run = List.of(event("e1", "ORDER_CREATED", 0), event("e2", "INVENTORY_STARTED", 50));
@@ -95,18 +78,10 @@ class ServiceDownRuleTest {
         assertThat(finding.get().explainedWait().closingEventId()).isEqualTo("e2");
     }
 
-    /**
-     * Which step the run waited on is decided in business order, not in the order the
-     * observer happened to read the events (I9). Events of one run travel on several topics;
-     * here ORDER_CREATED is read after PAYMENT_COMPLETED although it happened first. Read
-     * order put ORDER_CREATED right before the silence and charged it to payment; inventory,
-     * the service actually awaited and actually down, went unnamed (FTGO order 6, where the
-     * first saga command was read last).
-     */
     @Test
     void theAwaitedStepFollowsBusinessOrderEvenWhenEventsWereReadOutOfOrder() {
         List<SagaEvent> run = List.of(
-                event("e1", "ORDER_CREATED", 0, 2),        // happened first, read second
+                event("e1", "ORDER_CREATED", 0, 2),
                 event("e2", "PAYMENT_COMPLETED", 1, 1),
                 event("e3", "INVENTORY_RESERVED", 50, 50));
 
@@ -115,11 +90,10 @@ class ServiceDownRuleTest {
 
         assertThat(finding).isPresent();
         assertThat(finding.get().candidate().getAnchorStepId()).isEqualTo("RESERVE_INVENTORY");
-        // the wait is still measured on the observer's clock, from the last thing heard
+
         assertThat(finding.get().explainedWait().from()).isEqualTo(T0.plusSeconds(2));
     }
 
-    /** The same run, but the closing step's own service was the one restarted: not the cause. */
     @Test
     void theClosingStepsServiceDidNotHoldUpAWaitThatEndedWithItsOwnEvent() {
         List<SagaEvent> run = List.of(event("e1", "ORDER_CREATED", 0), event("e2", "INVENTORY_STARTED", 50));
@@ -129,7 +103,6 @@ class ServiceDownRuleTest {
                 .isEmpty();
     }
 
-    /** No runtime report — the collector off, a pause, a SIGSTOP, a partition: R05/R06 as before. */
     @Test
     void withoutAnyRuntimeReportNothingIsClaimed() {
         assertThat(assess(saga(SagaStatus.COMPLETED), recoveredRun(), T0.plusSeconds(60))).isEmpty();
@@ -149,7 +122,6 @@ class ServiceDownRuleTest {
                 .isEmpty();
     }
 
-    /** A restart while runs are in flight is not blamed on a run that never waited past its timeout. */
     @Test
     void aRunThatNeverWaitedPastTheTimeoutIsNotBlamed() {
         List<SagaEvent> fast = List.of(event("e1", "ORDER_CREATED", 0), event("e2", "PAYMENT_COMPLETED", 1),
@@ -159,7 +131,6 @@ class ServiceDownRuleTest {
                 .isEmpty();
     }
 
-    /** A start with no observed exit gives no interval: its beginning would be invented. */
     @Test
     void aStartWithoutAnObservedExitIsNotADownInterval() {
         assertThat(assess(saga(SagaStatus.COMPLETED), recoveredRun(), T0.plusSeconds(60),
@@ -188,7 +159,6 @@ class ServiceDownRuleTest {
         assertThat(selection.getPrimary().getRuleId()).isEqualTo("R25");
     }
 
-    /** Another step's timeout, or a silence outside the wait, is not this crash's consequence. */
     @Test
     void findingsAboutOtherWaitsAreLeftAsTheyWere() {
         ServiceDownRule.Finding finding = assess(saga(SagaStatus.COMPLETED), recoveredRun(), T0.plusSeconds(60),
@@ -206,10 +176,6 @@ class ServiceDownRuleTest {
         assertThat(r06.getStatus()).isEqualTo(CandidateStatus.STRONG_EVIDENCE);
     }
 
-    /**
-     * Two deployments both run a payment-service (the demo and the hotel saga, observed at
-     * once). With no declared scope, a name two scopes report cannot be pinned on this run.
-     */
     @Test
     void aServiceNameTwoDeploymentsReportIsNotAttributedWithoutADeclaredScope() {
         List<ServiceLifecycleEvent> lifecycle = List.of(
@@ -235,7 +201,6 @@ class ServiceDownRuleTest {
         assertThat(ServiceDownRule.readable(lifecycle, "kms")).isEmpty();
     }
 
-    /** One deployment only: the name is unambiguous and is used, scoped or not. */
     @Test
     void aSingleScopeIsUsedWithoutADeclaration() {
         List<ServiceLifecycleEvent> lifecycle = List.of(
@@ -244,7 +209,6 @@ class ServiceDownRuleTest {
         assertThat(ServiceDownRule.readable(lifecycle, null)).hasSize(2);
     }
 
-    /** A probe that could not reach the service is also what a partition looks like. */
     @Test
     void aFailedProbeCorroboratesACrashWithoutSettlingIt() {
         SagaInstance saga = saga(SagaStatus.COMPLETED);
@@ -282,7 +246,6 @@ class ServiceDownRuleTest {
         return ServiceDownRule.assess(saga, ServiceDownRule.waits(saga, events, workflow, now), List.of(lifecycle));
     }
 
-    /** Payment done at +1s, inventory's reply heard only at +50s (timeout 5s). */
     private static List<SagaEvent> recoveredRun() {
         return List.of(event("e1", "ORDER_CREATED", 0), event("e2", "PAYMENT_COMPLETED", 1),
                 event("e3", "INVENTORY_RESERVED", 50));

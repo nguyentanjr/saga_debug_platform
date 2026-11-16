@@ -21,12 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
-/**
- * L17: ended runs are analysed without anyone calling /rca/analyze. Which runs qualify is
- * SagaIdsAwaitingAnalysisTest; this pins what the sweep does with them.
- */
 class EndedRunAutoAnalysisTest {
-
     private final SagaInstanceRepository sagas = mock(SagaInstanceRepository.class);
     private final RcaService self = mock(RcaService.class);
     private final RcaService sweep = new RcaService(sagas, mock(SagaEventRepository.class),
@@ -48,10 +43,6 @@ class EndedRunAutoAnalysisTest {
         assertThat(statuses.getValue()).containsExactlyInAnyOrder(SagaStatus.FAILED, SagaStatus.COMPENSATED);
     }
 
-    /**
-     * A run diagnosed while it waited and then completed is analysed again once evidence
-     * outdates the diagnosis, even though completing raised no new finding.
-     */
     @Test
     @SuppressWarnings("unchecked")
     void completedRunsWithFindingsAndNewerEvidenceAreAnalysedAgain() {

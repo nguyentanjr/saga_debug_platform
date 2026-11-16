@@ -30,17 +30,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * R24: a FAILED run whose failure is the step's own declared failed event, carrying no
- * reason the source's declaration can read.
- *
- * <p>Found on a live run of an unmodified third-party saga (hotel reservation, 2026-09-21):
- * {@code ROOM_REJECTED} carries only {@code {"status":"REJECTED"}}, so R01/R23 had nothing
- * to read, no other rule looked at the failed event, and the result said "Saga completed
- * successfully with 2 events" about a run whose status was FAILED.
- */
 class DeclaredStepFailureTest {
-
     private static final FailureSignalRegistry NO_DECLARATIONS = new FailureSignalRegistry("");
 
     @Test
@@ -56,11 +46,6 @@ class DeclaredStepFailureTest {
         assertThat(result.getEvidence()).contains("PAYMENT_FAILED").doesNotContain("completed successfully");
     }
 
-    /**
-     * When the source's own wording is readable, R01/R23 say more than R24 about the same
-     * event. R24 must not be built at all, so SC06's promoted label cannot come to depend on
-     * how the selector breaks a tie between two claims on one event.
-     */
     @Test
     void aReadableDeclaredSignalLeavesNoRoomForR24() {
         RcaResult result = analyze(SagaStatus.FAILED, repositoryDeclarations(),
@@ -72,11 +57,6 @@ class DeclaredStepFailureTest {
         assertThat(result.getCandidates()).extracting(RcaCandidate::getRuleId).doesNotContain("R24");
     }
 
-    /**
-     * No declared failed event observed: nothing to state, and the selector's existing
-     * NO_DIAGNOSIS_NEEDED for a FAILED run without findings is kept. What changes is that
-     * the result no longer reports a FAILED run as a successful one.
-     */
     @Test
     void aFailedRunWithoutEvidenceIsNotReportedAsSuccessful() {
         RcaResult result = analyze(SagaStatus.FAILED, NO_DECLARATIONS,
@@ -88,7 +68,6 @@ class DeclaredStepFailureTest {
         assertThat(result.getEvidence()).doesNotContain("completed successfully");
     }
 
-    /** A failed event on a run that has not ended FAILED is not this claim. */
     @Test
     void aFailedEventOnARunStillInProgressDoesNotFire() {
         RcaResult result = analyze(SagaStatus.IN_PROGRESS, NO_DECLARATIONS,
@@ -97,8 +76,6 @@ class DeclaredStepFailureTest {
 
         assertThat(result.getCandidates()).extracting(RcaCandidate::getRuleId).doesNotContain("R24");
     }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private static RcaResult analyze(SagaStatus status, FailureSignalRegistry failureSignals,
             SagaEvent... events) {
@@ -127,7 +104,6 @@ class DeclaredStepFailureTest {
                 new ExecutionProjectionService(), failureSignals, null).analyze("saga-1");
     }
 
-    /** The declarations production reads, as Sc06ReplayTest does, not a copy. */
     private static FailureSignalRegistry repositoryDeclarations() {
         Path here = Path.of("").toAbsolutePath();
         Path root = Files.exists(here.resolve("declarations")) ? here : here.getParent();

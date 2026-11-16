@@ -8,16 +8,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * EXT-ACK: MISSING_COMPENSATION_ACK is withdrawn when the acknowledgement arrives late.
- *
- * <p>The hotel retest shape (semotpan 16d4f67, 2026-10-11): the release of the room was held
- * past the acknowledgement deadline, then ROOM_CANCELLED arrived and the run reached
- * COMPENSATED — but the finding that the acknowledgement was missing stood, through every
- * detector and RCA pass and a broker replay. Here on the packaged ORDER_SAGA.
- */
 class LateCompensationAckWithdrawalTest {
-
     private static final Instant T0 = Instant.parse("2026-10-11T23:14:00Z");
     private static final ExecutionKey RUN = ExecutionKey.of("shop", "ORD-1");
 
@@ -41,7 +32,7 @@ class LateCompensationAckWithdrawalTest {
     void anotherObservationWithoutTheAcknowledgementKeepsIt() {
         ReplayPipeline p = compensationStartedAndReported();
 
-        deliver(p, "e5", "REFUND_PAYMENT", "REFUND_PAYMENT", 60);   // a duplicate request, no ack
+        deliver(p, "e5", "REFUND_PAYMENT", "REFUND_PAYMENT", 60);
 
         assertThat(p.outcome(RUN.canonical()).anomalies).contains("MISSING_COMPENSATION_ACK");
     }

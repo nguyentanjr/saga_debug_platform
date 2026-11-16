@@ -23,7 +23,6 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/sagas")
 public class SagaController {
-
     private final SagaInstanceRepository sagaInstanceRepository;
     private final SagaEventRepository sagaEventRepository;
     private final AnomalyRepository anomalyRepository;
@@ -49,7 +48,6 @@ public class SagaController {
 
     private final com.example.correlation.workflow.WorkflowRegistry workflowRegistry;
 
-    /** Optional: tests that build this controller by hand leave it unset, and lifecycle stays empty. */
     private com.example.correlation.repository.ServiceLifecycleEventRepository lifecycleRepository;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -64,7 +62,6 @@ public class SagaController {
             @RequestParam(value = "endTime", required = false) Instant endTime,
             @RequestParam(value = "page", defaultValue = "0") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
-
         PageRequest pageRequest = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "startTime"));
 
         Page<SagaInstance> sagas;
@@ -79,7 +76,6 @@ public class SagaController {
             sagas = sagaInstanceRepository.findAll(pageRequest);
         }
 
-        
         List<String> sagaIds = sagas.getContent().stream()
                 .map(SagaInstance::getSagaId)
                 .collect(Collectors.toList());
@@ -89,8 +85,6 @@ public class SagaController {
                             r -> (String) r[0],
                             r -> (Long) r[1]));
 
-        // The newest diagnosis per run, and the findings still standing (L25), so the list
-        // can say where a run broke without opening it.
         Map<String, RcaResult> latestRca = new java.util.HashMap<>();
         Map<String, Long> anomalyCounts = new java.util.HashMap<>();
         if (!sagaIds.isEmpty()) {
@@ -117,7 +111,7 @@ public class SagaController {
             }
             item.setEventCount(eventCounts.getOrDefault(saga.getSagaId(), 0L));
             item.setAnomalyCount(anomalyCounts.getOrDefault(saga.getSagaId(), 0L));
-            // A diagnosis reached under a disputed specification is not a current one.
+
             RcaResult rca = saga.hasWorkflowConflict() ? null : latestRca.get(saga.getSagaId());
             if (rca != null) {
                 item.setRcaStatus(rca.getRcaStatus() != null ? rca.getRcaStatus().name() : null);
@@ -130,10 +124,6 @@ public class SagaController {
         return ResponseEntity.ok(result);
     }
 
-    /**
-     * Each declared service's state when the run began (its latest report before the start,
-     * looked for up to an hour back) and every report while the run was open.
-     */
     List<SagaDetailResponse.LifecycleEntry> lifecycleFor(SagaInstance saga,
             com.example.correlation.workflow.WorkflowSpec workflow) {
         if (lifecycleRepository == null || saga.getStartTime() == null) return List.of();
@@ -168,11 +158,6 @@ public class SagaController {
                 .toList();
     }
 
-    /**
-     * The step the stored diagnosis is anchored to: that of the candidate RCA promoted, which
-     * the result names by rule and cause. Null when nothing was promoted or the rule names no
-     * step; never taken from another candidate.
-     */
     static String promotedAnchorStep(RcaResult rca) {
         if (rca.getRootCause() == null || rca.getCandidates() == null) return null;
         return rca.getCandidates().stream()
@@ -184,15 +169,6 @@ public class SagaController {
                 .orElse(null);
     }
 
-    /**
-     * One execution, addressed either by its stored key or by the identifier the observed
-     * system issued.
-     *
-     * <p>The second form is what an operator and the evaluation harness actually hold:
-     * they know the id the source published, not the namespace this platform files it
-     * under. Resolution is exact rather than a search, and refuses rather than picks when
-     * one raw id names runs in two observed systems. See {@link ExecutionLookup}.
-     */
     @GetMapping("/{sagaId}")
     public ResponseEntity<SagaDetailResponse> getSagaDetail(@PathVariable("sagaId") String sagaId) {
         String executionId = executionLookup.resolve(sagaId).orElse(null);
@@ -203,8 +179,7 @@ public class SagaController {
         if (saga == null) {
             return ResponseEntity.notFound().build();
         }
-        // Everything below reads the run under the key it is actually stored by, never
-        // under the string the caller happened to use to ask for it.
+
         List<SagaEvent> events = sagaEventRepository.findBySagaIdOrderByTimestampAsc(executionId);
         List<Anomaly> anomalies = anomalyRepository.findBySagaId(executionId);
         List<RcaResult> rcaResults =
@@ -213,9 +188,7 @@ public class SagaController {
         SagaDetailResponse response = new SagaDetailResponse();
         response.setSagaId(saga.getSagaId());
         response.setSourceName(saga.getSourceName());
-        // Which identifiers this run answers to, and what event linked each one. An
-        // execution assembled from services that each knew a different id has to be able
-        // to say so rather than presenting itself as one shared id.
+
         response.setIdentities(aliasRepository.findByExecutionId(executionId).stream()
                 .map(alias -> new SagaDetailResponse.IdentityLink(
                         alias.getAliasKey(), alias.getSourceName(), alias.getLinkedByEventId()))

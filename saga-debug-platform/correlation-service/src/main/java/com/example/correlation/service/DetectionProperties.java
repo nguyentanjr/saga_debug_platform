@@ -6,7 +6,6 @@ import java.time.Duration;
 
 @ConfigurationProperties(prefix = "anomaly.detection")
 public class DetectionProperties {
-
     private Duration clockSkewTolerance = Duration.ofMillis(500);
     private int retryBurstThreshold = 3;
     private Duration retryBurstWindow = Duration.ofSeconds(60);
@@ -22,32 +21,9 @@ public class DetectionProperties {
     private StepTimeoutMode stepTimeoutMode = StepTimeoutMode.PROJECTION;
     private int detectionBatchSize = 500;
 
-    /**
-     * Maximum sagas one scheduled detector pass will examine.
-     *
-     * <p>Bounds heap and query cost per pass so they track the recent workload rather
-     * than total accumulated history. Sagas beyond the cap are picked up on a later
-     * pass; passes are ordered newest-first.
-     */
     public int getDetectionBatchSize() { return detectionBatchSize; }
     public void setDetectionBatchSize(int detectionBatchSize) { this.detectionBatchSize = detectionBatchSize; }
 
-    /**
-     * Which implementation of step-timeout detection is authoritative.
-     *
-     * <p>LEGACY measures the gap between positionally adjacent events; PROJECTION
-     * measures operation duration from the execution projection. SHADOW runs both,
-     * keeps LEGACY authoritative, and logs every divergence so the two can be
-     * compared on real traffic.
-     *
-     * <p>PROJECTION is the default since F20. The adjacency walk measured a step from
-     * whatever event preceded it to the step's own start event, so a compensation that
-     * began late and finished quickly was reported as a slow compensation -- the same gap
-     * DELAYED_COMPENSATION reports, counted twice. On the 27 recorded runs of the official
-     * set the two agree exactly (StepTimeoutModeOnRecordedRunsTest), because none observes
-     * a declared start event; they part only where a start is observed, which is where
-     * the adjacency walk is wrong.
-     */
     public enum StepTimeoutMode { LEGACY, SHADOW, PROJECTION }
 
     public StepTimeoutMode getStepTimeoutMode() { return stepTimeoutMode; }

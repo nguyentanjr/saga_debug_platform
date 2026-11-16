@@ -35,7 +35,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
-/** Actual persistence, reload and rollback; optional f6.* properties also run this on Postgres. */
 @DataJpaTest(showSql = false, properties = {
         "spring.datasource.url=${f6.jdbc.url:jdbc:h2:mem:f6;MODE=PostgreSQL;DB_CLOSE_DELAY=-1}",
         "spring.datasource.driver-class-name=${f6.jdbc.driver:org.h2.Driver}",
@@ -127,7 +126,7 @@ class EventTimeProvenanceTest {
         RawObservation first = raw("e1", null, TRANSPORT, Map.of());
         ingestion.ingest(first);
         assertThat(ingestion.ingest(first).outcome()).isEqualTo(IngestionResult.Outcome.DUPLICATE);
-        // A changed mapping at replay must not reinterpret a previously stored observation.
+
         mapping.getFields().setEventTime(TextNode.valueOf("header:occurred-at"));
         newIngestion().ingest(raw("e1", null, TRANSPORT.plusSeconds(20),
                 Map.of("occurred-at", EVENT.toString())));

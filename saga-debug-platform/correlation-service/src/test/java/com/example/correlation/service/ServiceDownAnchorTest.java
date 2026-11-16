@@ -31,21 +31,13 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * R25's anchor survives the analysis pass that anchors candidates at their earliest cited
- * event (EXT-R25-MISS-KITCHEN, live FTGO batches 7-9). R25 cites the event that closed the
- * wait; when that event belongs to a later step — a source without per-step completions —
- * the generic anchoring moved a crash of the awaited step's service to the next step, while
- * the evidence still said which step was awaited: every FTGO crash came out one step late.
- */
 class ServiceDownAnchorTest {
-
     private static final Instant T0 = Instant.parse("2026-01-01T00:00:00Z");
 
     @Test
     void aCrashStaysAnchoredAtTheStepTheRunWasWaitingOn() {
         SagaEvent created = event("e1", "ORDER_CREATED", 0);
-        SagaEvent inventoryStarted = event("e2", "INVENTORY_STARTED", 50);  // closes the wait, later step
+        SagaEvent inventoryStarted = event("e2", "INVENTORY_STARTED", 50);
 
         RcaResult result = analyze(created, inventoryStarted);
 

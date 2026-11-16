@@ -30,27 +30,10 @@ import com.example.correlation.workflow.WorkflowSpec;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
-/**
- * Whether an unacknowledged compensation is a fault depends on the specification.
- *
- * <p>The detector used to ask only "was a compensation completion seen", and read "no" as a
- * fault. That treats an absence as evidence without first asking whether anything was ever
- * going to fill it. One of the systems validated here settles the question: its
- * {@code ROLLBACK_STOCK} declares a {@code started} event and no {@code completed} one,
- * which is the shape of that system rather than an omission. Every compensating run on it
- * was therefore reported as unacknowledged, on every pass, for ever — a statement about the
- * platform's expectation wearing the observed system's name.
- *
- * <p>The two specifications below differ in exactly one line: whether the compensation step
- * declares a completion. Everything else — the events, the timing, the status — is held
- * identical, so a difference in verdict can only come from the declaration.
- */
 class CompensationAckDeclarationTest {
-
     private static final Instant T0 = Instant.parse("2026-01-01T00:00:00Z");
     private static final String SAGA_ID = "kms::ORD-1";
 
-    /** Declares the acknowledgement. Silence here is a real absence: something was owed. */
     private static final String ACKNOWLEDGING_WORKFLOW = """
             workflow:
               name: ACK_SAGA
@@ -71,10 +54,6 @@ class CompensationAckDeclarationTest {
                   to: RESERVE_STOCK
             """;
 
-    /**
-     * The real shape of {@code kms-order-saga}: the rollback is requested by the same
-     * verdict message and reports nothing back. Silence here is the declaration, not a gap.
-     */
     private static final String SILENT_WORKFLOW = """
             workflow:
               name: SILENT_SAGA
@@ -109,7 +88,6 @@ class CompensationAckDeclarationTest {
     @Test
     @DisplayName("the same silence on a system that never declared an acknowledgement is not a finding")
     void aRollbackThatPromisedNothingIsNotMissingAnything() {
-        // Identical events, identical timing, identical status. Only the declaration differs.
         assertThat(run(SILENT_WORKFLOW, compensationStarted())).isEmpty();
     }
 
@@ -145,8 +123,6 @@ class CompensationAckDeclarationTest {
                       to: RESERVE_STOCK
                 """;
 
-        // What matters is whether any event the step can publish would be read as it
-        // finishing, not which key the declaration happened to use.
         assertThat(spec(outcomeWorkflow).declaresCompletionEvent("ROLLBACK_STOCK")).isTrue();
         assertThat(run(outcomeWorkflow, compensationStarted())).hasSize(1);
     }
@@ -180,11 +156,8 @@ class CompensationAckDeclarationTest {
         assertThat(spec.declaresCompletionEvent("ROLLBACK_STOCK")).isFalse();
         assertThat(spec.declaresCompletionEvent("REFUND_PAYMENT")).isTrue();
 
-        // Only the silent rollback started: nothing is owed, so nothing is claimed, even
-        // though a sibling compensation step in the same workflow does declare a completion.
         assertThat(run(mixedWorkflow, compensationStarted())).isEmpty();
 
-        // The step that did promise one, and has not delivered, is reported on its own.
         List<SagaEvent> refundStarted = List.of(
                 event("e1", "STOCK_FAILED", T0),
                 event("e2", "STOCK_ROLLBACK_REQUESTED", T0.plusSeconds(5)),
@@ -202,8 +175,6 @@ class CompensationAckDeclarationTest {
         assertThat(spec(SILENT_WORKFLOW).declaresCompletionEvent("NO_SUCH_STEP")).isFalse();
         assertThat(spec(SILENT_WORKFLOW).declaresCompletionEvent(null)).isFalse();
     }
-
-    // ── harness ───────────────────────────────────────────────────────────────
 
     private static List<SagaEvent> compensationStarted() {
         return List.of(

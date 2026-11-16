@@ -8,12 +8,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Locks in what the engine reads out of the workflow specification, so knowledge that
- * belongs in the spec cannot quietly migrate back into Java constants.
- */
 class WorkflowSpecTest {
-
     private final WorkflowSpec spec = WorkflowSpecTestFixture.orderSaga();
 
     @Test
@@ -30,8 +25,6 @@ class WorkflowSpecTest {
 
     @Test
     void anEventDeclaredAsBothStartAndCompletionIsReadAsCompletion() {
-        // CREATE_ORDER declares ORDER_CREATED for started and completed alike; reading it
-        // as a completion is what lets it anchor the next step's start.
         assertThat(spec.classifyEvent("ORDER_CREATED"))
                 .contains(new EventRole("CREATE_ORDER", EventRole.Role.COMPLETED));
     }
@@ -47,7 +40,6 @@ class WorkflowSpecTest {
         assertThat(spec.predecessorStep("PROCESS_PAYMENT")).contains("CREATE_ORDER");
         assertThat(spec.predecessorStep("RESERVE_INVENTORY")).contains("PROCESS_PAYMENT");
 
-        // STARTED -> CREATE_ORDER carries no SUCCESS condition, and STARTED is not a step.
         assertThat(spec.predecessorStep("CREATE_ORDER")).isEmpty();
     }
 
@@ -58,8 +50,6 @@ class WorkflowSpecTest {
 
     @Test
     void declaredRetryPolicyIsParsedRatherThanDropped() {
-        // retryPolicy previously had no field on StepSpec and was silently discarded,
-        // so the declared attempt budget could not be compared against observations.
         assertThat(spec.declaredMaxAttempts("PROCESS_PAYMENT")).contains(3);
         assertThat(spec.declaredMaxAttempts("CREATE_ORDER")).isEmpty();
     }
@@ -71,7 +61,6 @@ class WorkflowSpecTest {
         assertThat(spec.getStepTimeoutSeconds("REFUND_PAYMENT")).isEqualTo(10);
     }
 
-    /** L16: a workflow that never wrote validEventTypes still places its events in steps. */
     @Test
     void withoutADeclaredMapTheStepComesFromTheStepsOwnEvents() {
         WorkflowSpec undeclared = WorkflowSpecTestFixture.orderSaga();
@@ -83,20 +72,12 @@ class WorkflowSpecTest {
         assertThat(undeclared.getExpectedStepForEvent("AUDIT_PING")).isNull();
     }
 
-    // ── L22: which edges a FAILED outcome may take ────────────────────────────
-
-    /**
-     * PROCESS_PAYMENT → RESERVE_INVENTORY is declared for SUCCESS only. A failed payment
-     * followed by inventory work is the run contradicting its specification; it used to be
-     * judged VALID because any edge between the two steps was accepted for FAILED.
-     */
     @Test
     void aFailedOutcomeDoesNotTakeAnEdgeDeclaredOnlyForSuccess() {
         assertThat(spec.explainTransition("PROCESS_PAYMENT", "RESERVE_INVENTORY",
                 WorkflowSpec.FAILED_OUTCOME).verdict()).isEqualTo(TransitionVerdict.INVALID);
     }
 
-    /** What that branch was written for still holds: an edge with no condition takes any outcome. */
     @Test
     void aFailedOutcomeStillTakesAnEdgeDeclaredWithoutACondition() {
         WorkflowSpec unconditioned = parse("""
@@ -119,7 +100,6 @@ class WorkflowSpecTest {
                 WorkflowSpec.FAILED_OUTCOME).verdict()).isEqualTo(TransitionVerdict.VALID);
     }
 
-    /** And a failure routed into compensation is still a declared handoff. */
     @Test
     void aFailedOutcomeStillTakesTheCompensationItIsRoutedTo() {
         assertThat(spec.explainTransition("RESERVE_INVENTORY", "REFUND_PAYMENT",
@@ -134,10 +114,6 @@ class WorkflowSpecTest {
         }
     }
 
-    /**
-     * L21: ORDER_SAGA's map leaves out every started and retry event and two failed ones.
-     * Where it is silent the steps answer, instead of the event belonging to no step.
-     */
     @Test
     void whereTheDeclaredMapIsSilentTheStepsAnswer() {
         assertThat(spec.getExpectedStepForEvent("PAYMENT_STARTED")).isEqualTo("PROCESS_PAYMENT");
@@ -147,7 +123,6 @@ class WorkflowSpecTest {
         assertThat(spec.getExpectedStepForEvent("REFUND_FAILED")).isEqualTo("REFUND_PAYMENT");
     }
 
-    /** Where the map speaks it still decides, even against the steps. No shipped spec disagrees. */
     @Test
     void whereTheDeclaredMapSpeaksItStillDecides() {
         WorkflowSpec overridden = WorkflowSpecTestFixture.orderSaga();

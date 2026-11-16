@@ -32,29 +32,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * What a withdrawn finding is allowed to go on influencing.
- *
- * <h2>The mechanism, and the hole in it</h2>
- * A claim of absence — "no start event was seen", "this saga is stuck", "the compensation
- * was never acknowledged" — is only ever true of the observations in hand, so the platform
- * withdraws one when later observations falsify it. The row stays, stamped with when and
- * why, and {@code existsBySagaIdAndAnomalyType} stops counting it so the detectors are free
- * to raise it again if it still holds.
- *
- * <p>Root-cause analysis read the anomalies straight back with {@code findBySagaId}, which
- * returns every row including the withdrawn ones. So a diagnosis was built on findings the
- * platform had already said it no longer stood behind: a run whose SAGA_STUCK was withdrawn
- * the moment its late events arrived was still diagnosed SERVICE_CRASH, with "Saga stuck
- * for Ns" offered as evidence. Withdrawing a claim and then citing it is worse than never
- * withdrawing it, because the report reads as current.
- *
- * <p>That is the same confusion as everywhere else in this audit, one layer up: a gap in
- * the platform's own evidence being read as evidence about the observed system.
- */
 class RetractedEvidenceTest {
-
-    /** No source has declared how it words failures -- what R01/R23 see when untold. */
     private static final FailureSignalRegistry EMPTY_FAILURE_SIGNALS =
             new FailureSignalRegistry("");
 
@@ -109,10 +87,6 @@ class RetractedEvidenceTest {
                 EMPTY_FAILURE_SIGNALS, null);
     }
 
-    /**
-     * A run that looked stuck, then turned out not to be. Both findings were withdrawn when
-     * the late events arrived, so neither may appear in the diagnosis.
-     */
     @Test
     void aWithdrawnFindingIsNotEvidenceForADiagnosis() {
         anomalies.add(withdrawn(AnomalyType.SAGA_STUCK));
@@ -126,7 +100,6 @@ class RetractedEvidenceTest {
         assertThat(String.valueOf(result.getRootCause())).doesNotContain("SERVICE_CRASH");
     }
 
-    /** A finding that still stands is still evidence, exactly as before. */
     @Test
     void aStandingFindingIsStillEvidence() {
         anomalies.add(standing(AnomalyType.SAGA_STUCK));
@@ -138,7 +111,6 @@ class RetractedEvidenceTest {
         assertThat(result.getEvidence()).contains("SAGA_STUCK");
     }
 
-    /** A mix reports only the half that still stands. */
     @Test
     void onlyTheStandingHalfOfAMixedSetIsUsed() {
         anomalies.add(standing(AnomalyType.OUT_OF_ORDER));
@@ -150,8 +122,6 @@ class RetractedEvidenceTest {
         assertThat(result.getEvidence()).contains("OUT_OF_ORDER");
         assertThat(result.getEvidence()).doesNotContain("SAGA_STUCK");
     }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private static Anomaly standing(AnomalyType type) {
         Anomaly anomaly = new Anomaly();

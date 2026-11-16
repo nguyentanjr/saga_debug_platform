@@ -12,21 +12,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Covers what changes once producers report which event caused which.
- *
- * <p>Everything the platform knew about dependency previously came from the workflow
- * specification: step B follows step A because the spec declares that edge. That is a
- * statement about the design. It cannot tell "B happened because A finished" apart from
- * "B happened after A finished", and on a run where the spec and reality disagree it
- * follows the spec.
- *
- * <p>A reported {@code causationId} is a statement about the run. Where one exists the
- * projection uses it and says so; where none exists nothing changes, so an unmodified
- * producer keeps working.
- */
 class ObservedCausalityTest {
-
     private static final Instant T0 = Instant.parse("2026-01-01T00:00:00Z");
 
     private final ExecutionProjectionService service = new ExecutionProjectionService();
@@ -79,15 +65,9 @@ class ObservedCausalityTest {
                 causedBy(event("e2", "PAYMENT_COMPLETED", T0.plusSeconds(4)), "from-another-saga"))
                 .operation("PROCESS_PAYMENT").orElseThrow();
 
-        // The reference could not be resolved, so the specification is used and the
-        // provenance says so instead of claiming an observed link.
         assertThat(payment.startProvenance()).isEqualTo(StartProvenance.INFERRED_FROM_PREDECESSOR);
     }
 
-    /**
-     * The case the specification cannot decide on its own: which arm of a fan-out
-     * actually triggered the work.
-     */
     @Test
     void areportedCauseIdentifiesWhichArmTriggeredTheJoin() {
         ExecutionProjection projection = project(parallel,
@@ -98,9 +78,6 @@ class ObservedCausalityTest {
 
         Operation settle = projection.operation("SETTLE_ORDER").orElseThrow();
 
-        // Inferring from the join would anchor this at the later arm (+8s). The producer
-        // says it was the seat reservation, so the reported link wins and the duration
-        // reflects what happened rather than what the graph implies.
         assertThat(settle.startProvenance()).isEqualTo(StartProvenance.OBSERVED_CAUSAL_LINK);
         assertThat(settle.startEventId()).isEqualTo("e2");
         assertThat(settle.duration().toSeconds()).isEqualTo(8);
@@ -128,8 +105,6 @@ class ObservedCausalityTest {
         assertThat(projection.operation("RESERVE_INVENTORY").orElseThrow().startProvenance())
                 .isEqualTo(StartProvenance.INFERRED_FROM_PREDECESSOR);
     }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private ExecutionProjection project(WorkflowSpec spec, SagaEvent... events) {
         return service.project("saga-c1", List.of(events), spec);

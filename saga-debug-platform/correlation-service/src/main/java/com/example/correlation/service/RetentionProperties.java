@@ -6,7 +6,6 @@ import java.time.Duration;
 
 @ConfigurationProperties(prefix = "retention")
 public class RetentionProperties {
-
     private boolean enabled = false;
     private Duration maxAge = Duration.ofDays(30);
     private int batchSize = 5000;
@@ -15,11 +14,9 @@ public class RetentionProperties {
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
 
-    /** How long a settled saga and its telemetry are kept after its last update. */
     public Duration getMaxAge() { return maxAge; }
     public void setMaxAge(Duration maxAge) { this.maxAge = maxAge; }
 
-    /** Sagas removed per purge run, bounding transaction size and lock duration. */
     public int getBatchSize() { return batchSize; }
     public void setBatchSize(int batchSize) { this.batchSize = batchSize; }
 

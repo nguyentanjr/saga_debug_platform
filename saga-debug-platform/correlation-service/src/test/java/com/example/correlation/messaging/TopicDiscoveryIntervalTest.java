@@ -14,14 +14,7 @@ import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * A topic the observed system creates after the observer started is read within a bounded
- * time (EXT-TOPIC-DISCOVERY). Pattern subscriptions see new topics only on a metadata
- * refresh; Kafka's default of 5 minutes left the first runs of a freshly started system
- * silent and diagnosed as stuck.
- */
 class TopicDiscoveryIntervalTest {
-
     @Test
     void theShippedConsumerConfigurationRefreshesTopicMetadataWithinAMinute() throws Exception {
         StandardEnvironment env = new StandardEnvironment();

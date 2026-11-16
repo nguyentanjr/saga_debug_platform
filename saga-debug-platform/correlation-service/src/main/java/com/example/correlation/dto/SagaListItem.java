@@ -15,9 +15,9 @@ public class SagaListItem {
     private Instant endTime;
     private Long durationMs;
     private long eventCount;
-    /** Standing (not retracted) findings on the run. */
+
     private long anomalyCount;
-    /** The newest stored diagnosis, summarised; all null when the run has none. */
+
     private String rcaStatus;
     private String rootCause;
     private String rootCauseStep;

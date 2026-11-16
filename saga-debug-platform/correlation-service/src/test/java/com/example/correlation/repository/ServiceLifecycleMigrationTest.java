@@ -12,13 +12,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/**
- * V19 adds a table nothing else reads, so existing rows and writers are untouched. Its two
- * constraints are the ones the collector relies on: a replayed runtime report is stored once,
- * and a state is only ever DOWN or UP.
- */
 class ServiceLifecycleMigrationTest {
-
     @Test
     void aReplayedReportIsStoredOnceAndOnlyTwoStatesExist() {
         DriverManagerDataSource dataSource = new DriverManagerDataSource(
@@ -40,7 +34,6 @@ class ServiceLifecycleMigrationTest {
                 .isEqualTo(1);
     }
 
-    /** Rows written before V20 all came from Docker die/start: a process report. */
     @Test
     void existingRowsArePROCESSAndOnlyTwoBasesExist() {
         DriverManagerDataSource dataSource = new DriverManagerDataSource(
@@ -61,7 +54,6 @@ class ServiceLifecycleMigrationTest {
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
-    /** V21 adds a nullable scope: rows recorded before it stay unscoped. */
     @Test
     void existingRowsStayUnscopedAfterV21() {
         DriverManagerDataSource dataSource = new DriverManagerDataSource(

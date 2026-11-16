@@ -30,25 +30,12 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * L18: an alert announces the stored result and says no more than it does.
- *
- * <p>Found on a live run of the hotel saga (2026-09-27): the stored result for a run whose
- * only strong candidate was R14 named no cause, and the alert for that same result named
- * {@code OUT_OF_ORDER_DELIVERY} as its primary root cause.
- */
 class AlertContentTest {
-
     private static final Instant T0 = Instant.parse("2026-01-01T00:00:00Z");
 
     private final List<AlertEvent> alerts = new ArrayList<>();
     private final List<Anomaly> anomalies = new ArrayList<>();
 
-    /**
-     * The live case: nothing about the observed system, so nothing to announce. The status
-     * is NO_DIAGNOSIS_NEEDED since F19 -- the same run read in order has no R14 at all, and
-     * the status may not depend on which order the platform read it in (I9).
-     */
     @Test
     void aRunWhoseOnlyEvidenceIsAboutTheObservationProcessRaisesNoAlert() {
         anomalies.add(anomaly(1L, AnomalyType.OUT_OF_ORDER));
@@ -61,7 +48,6 @@ class AlertContentTest {
         assertThat(alerts).isEmpty();
     }
 
-    /** R14 beside a real cause: the alert names what the result names, not both. */
     @Test
     void theAlertNamesExactlyTheCausesTheStoredResultNames() {
         anomalies.add(anomaly(1L, AnomalyType.OUT_OF_ORDER));
@@ -76,12 +62,6 @@ class AlertContentTest {
                         .isEqualTo(result.getPrimaryRootCauses()));
     }
 
-    /**
-     * A run that has only gone silent: R05 is a hypothesis (WEAK) since F23/R05, because
-     * silence does not establish a crash. It stays in the candidates for the reader, the
-     * result says the evidence is insufficient, and no diagnosis is announced. It used to
-     * be SUPPORTING, which alerted on a result that named no cause.
-     */
     @Test
     void silenceAloneIsAHypothesisAndAnnouncesNothing() {
         anomalies.add(anomaly(1L, AnomalyType.SAGA_STUCK));
@@ -96,11 +76,6 @@ class AlertContentTest {
         assertThat(alerts).isEmpty();
     }
 
-    /**
-     * Deliberately unchanged by L18: a business rejection read through R24 is a promoted
-     * claim about the observed system, and it still alerts. Suppressing it would need a
-     * claim-level policy, and nothing that consumes alerts exists yet to base one on.
-     */
     @Test
     void aStepsOwnDeclaredFailureStillAlerts() {
         analyze(SagaStatus.FAILED,
@@ -110,8 +85,6 @@ class AlertContentTest {
                 .satisfies(alert -> assertThat(alert.primaryRootCauses())
                         .containsExactly("STEP_REPORTED_FAILURE"));
     }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private RcaResult analyze(SagaStatus status, SagaEvent... events) {
         SagaInstance saga = new SagaInstance();
@@ -147,7 +120,7 @@ class AlertContentTest {
         anomaly.setAnomalyType(type);
         anomaly.setSagaId("saga-1");
         anomaly.setDescription(type.name());
-        // An hour after the last event: long enough past any declared timeout for R05.
+
         anomaly.setDetectedAt(T0.plusSeconds(3600));
         return anomaly;
     }
@@ -160,7 +133,7 @@ class AlertContentTest {
         event.setEventType(type);
         event.setPayload("{}");
         event.setTimestamp(T0.plusSeconds(second));
-        // Heard when stamped; left unset, receivedAt defaults to the moment the test runs.
+
         event.setReceivedAt(T0.plusSeconds(second));
         return event;
     }

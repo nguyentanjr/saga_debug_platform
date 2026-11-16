@@ -13,10 +13,6 @@ import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Lifecycle facts age out, but never a service's latest one: an exit with no start after it
- * is the beginning of a down interval a still-waiting run needs, however old it is (R25).
- */
 @DataJpaTest(showSql = false, properties = {
         "spring.datasource.url=jdbc:h2:mem:lifecycle_retention;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
         "spring.datasource.driver-class-name=org.h2.Driver",
@@ -29,7 +25,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class ServiceLifecycleRetentionTest {
-
     private static final Instant CUTOFF = Instant.parse("2026-09-01T00:00:00Z");
 
     @Autowired private ServiceLifecycleEventRepository repository;
@@ -44,7 +39,7 @@ class ServiceLifecycleRetentionTest {
         save("inventory-service", ServiceLifecycleEvent.State.DOWN, "2026-08-01T00:00:00Z");
         save("inventory-service", ServiceLifecycleEvent.State.UP, "2026-08-01T00:01:00Z");
         save("inventory-service", ServiceLifecycleEvent.State.DOWN, "2026-09-10T00:00:00Z");
-        // Down since long before the cutoff and never started again: still the current state.
+
         save("payment-service", ServiceLifecycleEvent.State.UP, "2026-07-01T00:00:00Z");
         save("payment-service", ServiceLifecycleEvent.State.DOWN, "2026-08-15T00:00:00Z");
 

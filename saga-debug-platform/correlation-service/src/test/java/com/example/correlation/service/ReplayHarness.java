@@ -6,12 +6,7 @@ import com.example.correlation.workflow.WorkflowRegistry;
 import java.time.Instant;
 import java.util.List;
 
-/**
- * Public entry to {@link ReplayPipeline} for tests outside this package: delivers captured
- * observations of one run, in the order given, and reports what the platform concluded.
- */
 public final class ReplayHarness {
-
     public record CapturedEvent(String eventId, String eventType, Instant timestamp, String serviceName) {}
 
     public record Result(String status, List<AnomalyType> standing) {}
@@ -22,7 +17,7 @@ public final class ReplayHarness {
                                 List<CapturedEvent> deliveryOrder) {
         ReplayPipeline pipeline = new ReplayPipeline(workflows);
         ExecutionKey key = ExecutionKey.of(source, runId);
-        // Arrival follows delivery order; business time is what the source stamped.
+
         Instant arrival = Instant.parse("2026-10-11T00:00:00Z");
         for (CapturedEvent e : deliveryOrder) {
             arrival = arrival.plusMillis(10);

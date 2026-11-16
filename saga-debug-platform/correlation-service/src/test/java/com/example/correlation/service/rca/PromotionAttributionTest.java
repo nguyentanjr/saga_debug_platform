@@ -37,34 +37,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * Who a promoted cause has to be about.
- *
- * <h2>What went wrong</h2>
- * Once promotion existed, the front of the ranked list became the reported root cause.
- * Ranking asks where in the execution a candidate is anchored before it asks how severe it
- * is, which is right: the earliest divergence is what a reader should look at first. But
- * OUT_OF_ORDER_DELIVERY (R14) anchors at whichever step this platform read late, and on a
- * backlog read that is the first step of the run. So a finding about the observer's own
- * reception order sorted above an unacknowledged compensation and above a downstream
- * timeout, and was published as the cause of both.
- *
- * <p>Cross-system validation against {@code sylleryum/kafka-microservices-with-saga}
- * produced it twice in eleven live executions. In both the observed system had done
- * nothing wrong: the pairs R14 reported came from different topics, and Kafka defines no
- * ordering across topics for either side to have violated. The same records ingested live,
- * rather than as a backlog catch-up, raised nothing at all.
- *
- * <h2>What changed, and what deliberately did not</h2>
- * A candidate now says who its claim is about, and only a claim about the observed system
- * can answer "what did the observed system do wrong". Nothing else moved: R14 keeps its
- * tier, its severity, its anchor, its evidence and its rank, and is still returned in
- * {@code candidates}. These tests pin both halves — that it is still there, and that it
- * can no longer be the answer.
- */
 class PromotionAttributionTest {
-
-    /** No source has declared how it words failures -- what R01/R23 see when untold. */
     private static final FailureSignalRegistry EMPTY_FAILURE_SIGNALS =
             new FailureSignalRegistry("");
 
@@ -72,10 +45,6 @@ class PromotionAttributionTest {
 
     private final RcaSelector selector = new RcaSelector();
 
-    /**
-     * Positions along the order saga, so a candidate anchored at the first step ranks
-     * ahead of everything else — the arrangement the live backlog runs produced.
-     */
     private final RcaSelector.ExecutionOrder order = new RcaSelector.ExecutionOrder() {
         private final List<String> steps =
                 List.of("CREATE_ORDER", "PROCESS_PAYMENT", "RESERVE_INVENTORY");
@@ -92,9 +61,6 @@ class PromotionAttributionTest {
         }
     };
 
-    // ══ the eligibility rule itself ═══════════════════════════════════════════
-
-    /** The headline, in one assertion pair: ranked first, and still not the answer. */
     @Test
     void aClaimAboutTheObservationProcessIsRankedButNotPromoted() {
         RcaSelector.SelectionResult result = selector.select(
@@ -105,12 +71,6 @@ class PromotionAttributionTest {
         assertThat(result.getPrimary()).isNull();
     }
 
-    /**
-     * Not a retraction and not a downgrade: R14 keeps STRONG_EVIDENCE and its place in the
-     * candidates. But it is not evidence about the observed system, so the status says
-     * there is none (F19). It used to say EVIDENCE_AVAILABLE, which made the status of a
-     * run depend on whether the platform happened to read its events out of order (I9).
-     */
     @Test
     void aRunWhoseOnlyStrongCandidateIsAboutTheObserverNamesNoCause() {
         RcaSelector.SelectionResult result = selector.select(
@@ -122,11 +82,6 @@ class PromotionAttributionTest {
         assertThat(result.getPrimary()).isNull();
     }
 
-    /**
-     * The compensation case, as it occurred: on run {@code 55cc3901} R14 displaced R10, and
-     * the platform advised checking Kafka partition keys for a run whose compensation had
-     * simply never been acknowledged.
-     */
     @Test
     void anUnacknowledgedCompensationIsPromotedPastIt() {
         CandidateAssessment compensation = candidate(
@@ -143,10 +98,6 @@ class PromotionAttributionTest {
         assertThat(result.getPrimary().getRootCause()).isEqualTo("COMPENSATION_STEP_FAILURE");
     }
 
-    /**
-     * The delayed case, as it occurred: on run {@code 78f1d875} R14 displaced R07 for a run
-     * whose payment leg really had taken four minutes.
-     */
     @Test
     void aDownstreamTimeoutIsPromotedPastIt() {
         CandidateAssessment timeout = candidate(
@@ -162,11 +113,6 @@ class PromotionAttributionTest {
         assertThat(result.getPrimary().getRuleId()).isEqualTo("R07");
     }
 
-    /**
-     * Ranking is untouched. R14 still sorts first — it is anchored at the earliest step —
-     * and promotion simply reads past it. Had the comparator been changed instead, this
-     * would fail, and the reader would lose the ordering that says where to look first.
-     */
     @Test
     void theRankingIsUnchangedByTheEligibilityRule() {
         CandidateAssessment compensation = candidate(
@@ -182,7 +128,6 @@ class PromotionAttributionTest {
                 .containsExactly("R14", "R10");
     }
 
-    /** Everything the candidate carried, it still carries. */
     @Test
     void theCandidateKeepsEverythingItCarried() {
         RcaSelector.SelectionResult result = selector.select(
@@ -200,11 +145,6 @@ class PromotionAttributionTest {
         assertThat(r14.getSubject()).isEqualTo(ClaimSubject.OBSERVATION_PROCESS);
     }
 
-    /**
-     * The default is unchanged, which is what keeps this from being a change to every rule.
-     * A candidate that says nothing about its subject is about the observed system, exactly
-     * as every candidate implicitly was before.
-     */
     @Test
     void aCandidateThatDeclaresNoSubjectIsStillPromotable() {
         CandidateAssessment silent = candidate(
@@ -219,11 +159,6 @@ class PromotionAttributionTest {
         assertThat(result.getPrimary().getRuleId()).isEqualTo("R03");
     }
 
-    /**
-     * The distinction is about the subject of the claim, not about its subject matter. A
-     * source that published one event twice is a fact about that source, so R13 stays
-     * promotable even though it too is a finding about delivery.
-     */
     @Test
     void aFindingAboutDeliveryByTheSourceIsNotAFindingAboutTheObserver() {
         CandidateAssessment duplicate = candidate(
@@ -237,8 +172,6 @@ class PromotionAttributionTest {
 
         assertThat(result.getPrimary().getRuleId()).isEqualTo("R13");
     }
-
-    // ══ the shipped rules, through the real service ═══════════════════════════
 
     private List<Anomaly> storedAnomalies;
     private SagaInstance analysedSaga;
@@ -258,7 +191,7 @@ class PromotionAttributionTest {
                 .thenReturn(List.of(event("ORDER_CREATED")));
 
         AnomalyRepository anomalyRepository = mock(AnomalyRepository.class);
-        // Mirrors the real query: RCA reads only findings that still stand.
+
         when(anomalyRepository.findStandingBySagaId(anyString()))
                 .thenAnswer(call -> storedAnomalies.stream()
                         .filter(a -> a.getRetractedAt() == null)
@@ -281,10 +214,6 @@ class PromotionAttributionTest {
                 EMPTY_FAILURE_SIGNALS, null);
     }
 
-    /**
-     * The shipped R14 declares its own subject, so this holds through the real registry
-     * rather than only for a candidate built by hand in this file.
-     */
     @Test
     void theShippedOutOfOrderRuleDeclaresItselfAboutTheObservationProcess() {
         storedAnomalies.add(anomaly(1L, AnomalyType.OUT_OF_ORDER));
@@ -305,7 +234,6 @@ class PromotionAttributionTest {
         assertThat(result.getPrimaryRootCauses()).isEmpty();
     }
 
-    /** Beside a genuine operational cause, that cause is the one reported. */
     @Test
     void aDownstreamTimeoutBesideItIsStillPromoted() {
         storedAnomalies.add(anomaly(1L, AnomalyType.OUT_OF_ORDER));
@@ -318,7 +246,6 @@ class PromotionAttributionTest {
         assertThat(ruleIdsOf(result)).contains("R14");
     }
 
-    /** R13 through the shipped registry: a real duplicate is still named. */
     @Test
     void aGenuineDuplicateDeliveryIsStillPromoted() {
         storedAnomalies.add(anomaly(1L, AnomalyType.EXACT_DUPLICATE_EVENT));
@@ -329,7 +256,6 @@ class PromotionAttributionTest {
         assertThat(result.getRuleId()).isEqualTo("R13");
     }
 
-    /** R12 through the shipped registry: a real invalid transition is still named. */
     @Test
     void aGenuineInvalidTransitionIsStillPromoted() {
         storedAnomalies.add(anomaly(1L, AnomalyType.INVALID_TRANSITION));
@@ -340,10 +266,6 @@ class PromotionAttributionTest {
         assertThat(result.getRuleId()).isEqualTo("R12");
     }
 
-    /**
-     * Retraction still governs everything else. A withdrawn operational finding cannot be
-     * promoted, and the observation-process finding standing beside it does not step in.
-     */
     @Test
     void retractedOperationalEvidenceStillCannotBePromoted() {
         Anomaly timeout = anomaly(2L, AnomalyType.STEP_TIMEOUT);
@@ -365,9 +287,6 @@ class PromotionAttributionTest {
                 .contains("R14");
     }
 
-    // ── helpers ───────────────────────────────────────────────────────────────
-
-    /** R14 as the service builds it: strong, MEDIUM, anchored at the run's first step. */
     private static CandidateAssessment outOfOrder() {
         CandidateAssessment assessment = CandidateAssessment.builder()
                 .ruleId("R14")

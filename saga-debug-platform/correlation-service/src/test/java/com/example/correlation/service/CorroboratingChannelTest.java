@@ -11,18 +11,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * The ending reported again on another channel confirms it; repeated on the same channel it
- * is the source doing the step twice.
- *
- * <p>Live ewallet W2N (2026-10-15, main 9bb1c42): UNHOLD_SUCCEEDED arrives from the business
- * topic and again from CORE-TRANSFER-TRANSACTION-RESULT, and RELEASE_SUCCEEDED likewise -- 3/3
- * remaining FORBIDDEN_POST_TERMINAL were this. SPM after resume republished on its own topic
- * and charged the customer twice; that must stay reported. Both mappings of a system share
- * one source name, so the channel is read from the transport position.
- */
 class CorroboratingChannelTest {
-
     private static final ExecutionKey RUN = ExecutionKey.of("ewallet-core-transfer", "TX-3");
     private static final Instant T0 = Instant.parse("2026-10-15T10:00:00Z");
 

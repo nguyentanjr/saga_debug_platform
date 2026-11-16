@@ -28,16 +28,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
-/**
- * Observing a system that publishes over something other than Kafka.
- *
- * <p>Kafka used to be the only way in, so a system using AMQP, calling a webhook, or
- * shipping through a log agent could not be observed without first being put behind a
- * broker it did not otherwise need. This endpoint reaches the same ingestion path, so
- * neither the mapping nor anything downstream is aware of how the observation arrived.
- */
 class IngestControllerTest {
-
     private static final String SOURCE = "legacy.orders.events";
     private static final String TOKEN = "test-ingest-token";
 
@@ -79,8 +70,6 @@ class IngestControllerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
         assertThat(response.getBody()).containsEntry("accepted", 1);
 
-        // Read through the same mapping the Kafka path uses: nothing about the transport
-        // reaches the correlation service.
         IngestedEvent ingested = captured();
         assertThat(ingested.eventId()).isEqualTo("http-1");
         assertThat(ingested.executionKey().rawId()).isEqualTo("ORD-77");
@@ -121,7 +110,7 @@ class IngestControllerTest {
         List<Map<String, Object>> results =
                 (List<Map<String, Object>>) response.getBody().get("results");
         assertThat(results.get(0)).containsEntry("outcome", "ACCEPTED");
-        // The second names why, so the caller can fix its mapping rather than guess.
+
         assertThat(results.get(1)).containsEntry("outcome", "NOT_CORRELATABLE");
         assertThat(results.get(1).get("reason").toString()).contains("context.orderNumber");
     }
@@ -141,8 +130,6 @@ class IngestControllerTest {
 
     @Test
     void anEventWithoutAnIdIsRejectedRatherThanGivenASyntheticOne() {
-        // A Kafka record can fall back to its offset. An HTTP body has no such identity,
-        // and inventing one per request would defeat deduplication entirely.
         ResponseEntity<Map<String, Object>> response = post("""
                 {"type":"order.created","occurredAt":"2026-01-01T00:00:00Z",
                  "context":{"orderNumber":"ORD-4"}}
@@ -162,16 +149,12 @@ class IngestControllerTest {
         doThrow(new DataAccessResourceFailureException("database down"))
                 .when(correlationService).processEvent(any(IngestedEvent.class));
 
-        // Not reported as a rejection: the caller must be able to tell "we will not take
-        // this" from "we could not take this right now".
         assertThatThrownBy(() -> post("""
                 {"id":"t1","type":"order.created","occurredAt":"2026-01-01T00:00:00Z",
                  "context":{"orderNumber":"ORD-5"}}
                 """))
                 .isInstanceOf(DataAccessResourceFailureException.class);
     }
-
-    // ── L5: whoever can post writes evidence ──
 
     private static final String EVENT = """
             {"id":"http-auth","type":"order.payment.captured","occurredAt":"2026-01-01T00:00:04Z",
@@ -189,7 +172,6 @@ class IngestControllerTest {
         assertThat(controller.infer(SOURCE, body, null).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
         verifyNoInteractions(correlationService);
 
-        // Header names are case-insensitive, and so is the scheme.
         assertThat(controller.ingest(SOURCE, body, Map.of("authorization", "bearer " + TOKEN)).getStatusCode())
                 .isEqualTo(HttpStatus.ACCEPTED);
     }
@@ -219,13 +201,10 @@ class IngestControllerTest {
                 .containsOnlyKeys("x-observation-key");
     }
 
-    // ── helpers ───────────────────────────────────────────────────────────────
-
     private ResponseEntity<Map<String, Object>> post(String json) {
         try {
             JsonNode body = mapper.readTree(json);
-            // No transport headers: these tests are about the body and the batch reply.
-            // TransportPortabilityTest is where the envelope itself is covered.
+
             return controller.ingest(SOURCE, body, Map.of("Authorization", "Bearer " + TOKEN));
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             throw new IllegalArgumentException("test payload is not JSON", e);

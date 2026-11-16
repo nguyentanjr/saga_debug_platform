@@ -20,25 +20,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * Whether an event lost the trace its siblings carry.
- *
- * <p>The detector used to answer that by parsing each payload and looking for a field
- * named {@code traceId} at the top level. That name is this platform's own convention,
- * and the mapping layer exists precisely because no external system shares it. So the
- * detector was reading past the mapping — the one place that knows where a source keeps
- * its fields — and asking every observed system to have been written like this one.
- *
- * <p>Two consequences, both tested below. For a system that nests its trace id, every
- * event looked untraced, so a genuinely broken propagation could never be reported and
- * the RCA report lost its link to the traces. And in a deployment observing more than one
- * source — this platform's own services alongside a system that nests it — the sources
- * that put the field elsewhere were reported as broken when nothing was wrong.
- *
- * <p>The trace id now arrives on the event, mapped like every other field.
- */
 class TraceContextDetectionTest {
-
     private static final Instant T0 = Instant.parse("2026-01-01T00:00:00Z");
     private static final String TRACE = "4bf92f3577b34da6a3ce929d0e0e4736";
 
@@ -56,11 +38,6 @@ class TraceContextDetectionTest {
         assertThat(anomaly.getEvidenceEventIds()).contains("e2");
     }
 
-    /**
-     * Plenty of systems publish no trace context at all. That is a fact about the source,
-     * not a defect in the run, and reporting it as one would fill a report with findings
-     * the operator can do nothing about.
-     */
     @Test
     void aSourceThatPublishesNoTraceContextIsNotReportedAsBroken() {
         List<SagaEvent> events = List.of(
@@ -70,16 +47,6 @@ class TraceContextDetectionTest {
         assertThat(detect(events.get(1), events)).isNull();
     }
 
-    /**
-     * The regression this change exists for.
-     *
-     * <p>Every event here carries a trace. They disagree only about where it sits in the
-     * payload: one at the top level, the way this platform's own services emit it, the
-     * others nested under the observed system's own object. Reading the payload for a
-     * field named {@code traceId} saw a saga where some events had a trace and one did
-     * not, and reported a broken propagation — against a system whose trace propagation
-     * was intact. Reading the mapped value sees three traced events and says nothing.
-     */
     @Test
     void aNestedTraceIdIsNotMistakenForABrokenPropagation() {
         SagaEvent ours = traced("e1", "ORDER_CREATED", T0);
@@ -96,14 +63,6 @@ class TraceContextDetectionTest {
         assertThat(detect(theirs, events)).isNull();
     }
 
-    // ── helpers ───────────────────────────────────────────────────────────────
-
-    /**
-     * @param event kept in the signature so each case still reads as being about one
-     *              observation; the detector now examines the whole run, because which
-     *              event arrived first is a property of the delivery and not of the run
-     * @return the anomaly the detector wrote, or null when it wrote nothing
-     */
     private Anomaly detect(SagaEvent event, List<SagaEvent> sagaEvents) {
         List<Anomaly> saved = new ArrayList<>();
         AnomalyRepository repository = mock(AnomalyRepository.class);

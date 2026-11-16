@@ -28,22 +28,11 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * F15: R05 measures how long a run has been silent, and must do it on one clock.
- *
- * <p>It subtracted the source's timestamp of the last event from the platform's
- * {@code detectedAt}. A source clock running behind added its lag to the silence; one
- * running ahead subtracted it, down to a negative number. SAGA_STUCK already measures on
- * {@code receivedAt} for exactly this reason. ORDER_SAGA's slowest step is 10s, so R05's
- * threshold is 30s.
- */
 class SilenceClockTest {
-
     private static final Instant HEARD = Instant.parse("2026-01-01T12:00:00Z");
 
     @Test
     void aSourceClockRunningBehindDoesNotInflateTheSilence() {
-        // Heard 20s before the findings; stamped ten minutes earlier by a lagging clock.
         RcaResult result = analyze(HEARD.minusSeconds(600), HEARD, HEARD.plusSeconds(20));
 
         assertThat(result.getCandidates()).extracting(RcaCandidate::getRuleId).doesNotContain("R05");
@@ -51,7 +40,6 @@ class SilenceClockTest {
 
     @Test
     void aSourceClockRunningAheadDoesNotHideTheSilence() {
-        // Heard 60s before the findings; stamped ten minutes later by a clock running ahead.
         RcaResult result = analyze(HEARD.plusSeconds(600), HEARD, HEARD.plusSeconds(60));
 
         assertThat(result.getCandidates()).filteredOn(c -> "R05".equals(c.getRuleId()))
@@ -59,10 +47,6 @@ class SilenceClockTest {
                 .satisfies(c -> assertThat(c.getEvidence()).anyMatch(e -> e.fact().contains("60s")));
     }
 
-    /**
-     * F15, rest: R06 reports the run's total duration, between its first and last event's
-     * timestamps. Like a step timeout since F12, it now says which clocks those came from.
-     */
     @Test
     void theRecoveredRunsTotalDurationSaysWhichClocksItSpans() {
         SagaEvent first = event("e-1", "ORDER_CREATED", HEARD, HEARD);

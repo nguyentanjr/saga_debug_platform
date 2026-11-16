@@ -15,12 +15,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * The transfer workflows against what staging produced on 2026-11-02: a cash out from bank that
- * expired and was unheld, and a transfer to bank that succeeded.
- */
 class EwalletCoreTransferDeclarationTest {
-
     private static final ExecutionKey RUN = ExecutionKey.of("ewallet-core-transfer", "A1");
 
     @Test
@@ -117,7 +112,6 @@ class EwalletCoreTransferDeclarationTest {
         assertThat(standing(p)).isEmpty();
     }
 
-    /** Staging run A6305546441882781 (2026-11-02): read across three topics, in any order. */
     private static final String[][] EXPIRED_CASH_OUT = {
             {"W2N_REQUESTED", "2026-11-02T08:11:07.121Z", "staging-ewallet-transfer-management-v2-0-1340633"},
             {"W2N_HOLD_SUCCEEDED", "2026-11-02T08:11:07.239Z", "staging-ewallet-transfer-business-v2-1-1176962"},
@@ -128,7 +122,6 @@ class EwalletCoreTransferDeclarationTest {
             {"W2N_Holding_Success", "2026-11-02T08:17:05.635Z", "CORE-TRANSFER-TRANSACTION-RESULT-4-587859"},
             {"UNHOLD_SUCCEEDED", "2026-11-02T08:17:05.636Z", "CORE-TRANSFER-TRANSACTION-RESULT-4-587860"}};
 
-    /** Staging run A6305571611880308 (2026-11-02): one request, two channels reporting its success. */
     private static final String[][] TRANSFER_TO_BANK = {
             {"W2O_REQUESTED", "2026-11-02T08:53:12.435Z", "staging-ewallet-transfer-management-w2o-28-0"},
             {"W2O_SEND_SUCCEEDED", "2026-11-02T08:53:18.032Z", "staging-ewallet-transfer-business-v2-0-1348605"},
@@ -146,7 +139,6 @@ class EwalletCoreTransferDeclarationTest {
                 .containsExactly(List.of());
     }
 
-    /** The distinct sets of standing findings over every delivery order; the status must not vary. */
     private static java.util.Set<List<String>> findingsInEveryOrder(String workflow, String[][] events, SagaStatus expected) {
         java.util.Set<List<String>> findings = new java.util.HashSet<>();
         for (List<Integer> order : deliveryOrders(events)) {
@@ -166,10 +158,6 @@ class EwalletCoreTransferDeclarationTest {
         return findings;
     }
 
-    /**
-     * Eight orders Kafka could deliver: as recorded, reversed and six seeded shuffles, each then
-     * put back into offset order within every partition, which Kafka does guarantee.
-     */
     private static List<List<Integer>> deliveryOrders(String[][] events) {
         List<Integer> recorded = new java.util.ArrayList<>(java.util.stream.IntStream.range(0, events.length).boxed().toList());
         List<List<Integer>> orders = new java.util.ArrayList<>(List.of(recorded));

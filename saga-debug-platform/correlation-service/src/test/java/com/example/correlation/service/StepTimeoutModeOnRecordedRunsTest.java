@@ -23,18 +23,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * F20 evidence: the two step-timeout measurements over every recorded run of the official
- * set (oracle/evidence, 27 runs), before the default moved from SHADOW to PROJECTION.
- *
- * <p>This is what SHADOW mode existed to collect. None of these runs observes a step's
- * declared start event, so the projection falls back to the predecessor's completion --
- * the same interval the adjacency walk measures -- and the two must agree. A disagreement
- * here would mean the switch changes the headline, which is why it is asserted rather than
- * printed.
- */
 class StepTimeoutModeOnRecordedRunsTest {
-
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private final WorkflowSpec spec = WorkflowSpecTestFixture.orderSaga();
 
@@ -64,7 +53,6 @@ class StepTimeoutModeOnRecordedRunsTest {
         assertThat(divergent).as("runs whose STEP_TIMEOUT changes with the switch").isEmpty();
     }
 
-    /** Step and whole-millisecond duration, e.g. PROCESS_PAYMENT=41210ms; null when nothing fires. */
     private String measure(DetectionProperties.StepTimeoutMode mode, List<SagaEvent> events) {
         List<Anomaly> saved = new ArrayList<>();
         AnomalyRepository repository = mock(AnomalyRepository.class);
@@ -97,7 +85,7 @@ class StepTimeoutModeOnRecordedRunsTest {
             event.setPayload(e.path("payload").asText());
             events.add(event);
         }
-        // As the production caller supplies them: event-time order.
+
         events.sort(Comparator.comparing(SagaEvent::getTimestamp));
         return events;
     }

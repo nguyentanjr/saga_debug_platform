@@ -23,18 +23,6 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
-/**
- * Values the observed system chooses must fit the columns that store them (EXT-LONG-TYPE).
- *
- * <p>An event type no mapping translates is stored as the source wrote it. For a Java system
- * that is a fully qualified class name; FTGO's OrderCreatedEvent is 66 characters and did not
- * fit VARCHAR(50), so the record failed, was retried, and held up its partition.
- *
- * <p>Runs on the H2 schema that stands in for the migrations. Set
- * {@code -Dsvw.jdbc.url=jdbc:postgresql://... -Dsvw.flyway=true -Dsvw.init=never}
- * (plus driver/username/password) to run the same test against Postgres with the real
- * Flyway migrations.
- */
 @DataJpaTest(showSql = false, properties = {
         "spring.datasource.url=${svw.jdbc.url:jdbc:h2:mem:svw;MODE=PostgreSQL;DB_CLOSE_DELAY=-1}",
         "spring.datasource.driver-class-name=${svw.jdbc.driver:org.h2.Driver}",
@@ -48,7 +36,6 @@ import static org.mockito.Mockito.mock;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class SourceValueWidthTest {
-
     private static final Instant AT = Instant.parse("2026-10-16T08:04:20Z");
     private static final String FTGO_TYPE =
             "net.chrisrichardson.ftgo.orderservice.api.events.OrderCreatedEvent";
@@ -60,8 +47,8 @@ class SourceValueWidthTest {
     @Test
     void anUntranslatedFullyQualifiedEventTypeIsStoredAsTheSourceWroteIt() {
         String run = UUID.randomUUID().toString();
-        String step = "step.".repeat(30);                       // 150 characters
-        String service = "svc-".repeat(40);                     // 160 characters
+        String step = "step.".repeat(30);
+        String service = "svc-".repeat(40);
         CorrelationService correlation = new CorrelationService(instances, events,
                 mock(AnomalyDetectionService.class), new DeduplicationCache(),
                 loadedWorkflows(), new ObjectMapper().findAndRegisterModules());

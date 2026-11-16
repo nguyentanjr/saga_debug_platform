@@ -7,7 +7,6 @@ import java.util.List;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class RcaCandidate {
-
     private String ruleId;
     private String rootCause;
     private String severity;
@@ -16,25 +15,12 @@ public class RcaCandidate {
     private List<String> suggestions = new ArrayList<>();
     private String statusReason;
 
-    /**
-     * Who this candidate's claim is about. Carried through to the stored result so a
-     * reader can see why a candidate ranked first and was still not reported as the cause.
-     */
     private ClaimSubject subject = ClaimSubject.OBSERVED_SYSTEM;
 
-    /** Step whose observations this candidate rests on, per the execution projection. */
     private String anchorStepId;
 
-    /** Earliest evidence timestamp; the candidate's position in the execution. */
     private java.time.Instant anchorAt;
 
-    /**
-     * Rule ids of candidates anchored at a step upstream of this one.
-     *
-     * <p>An ordering observation, not a causal claim: it records that the execution
-     * diverged earlier somewhere this candidate depends on, and leaves the reader to
-     * judge whether that explains it.
-     */
     private List<String> precededBy = new ArrayList<>();
 
     public static RcaCandidate from(CandidateAssessment assessment) {

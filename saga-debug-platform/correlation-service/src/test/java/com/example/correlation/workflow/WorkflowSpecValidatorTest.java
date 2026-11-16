@@ -8,15 +8,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * The defects this catches are all silent ones: nothing throws, the engine starts, and
- * the wrongness only shows up later as a saga that never finishes or a diagnosis that
- * makes no sense. Each test therefore names the runtime symptom it prevents.
- */
 class WorkflowSpecValidatorTest {
-
-    // ── the shipped spec ──────────────────────────────────────────────────────
-
     @Test
     void theShippedOrderSagaIsValid() {
         WorkflowRegistry registry = new WorkflowRegistry();
@@ -29,12 +21,8 @@ class WorkflowSpecValidatorTest {
         assertThat(report.isUsable()).isTrue();
     }
 
-    // ── errors: the spec cannot be interpreted as written ─────────────────────
-
     @Test
     void anUnreachableStepIsAnError() {
-        // Symptom without this check: the step is never entered, so its timeout never
-        // fires and nothing ever reports that it did not run.
         WorkflowSpec spec = minimal();
         spec.getSteps().add(step("ORPHANED_STEP", Map.of("completed", "ORPHANED_DONE")));
 
@@ -53,8 +41,6 @@ class WorkflowSpecValidatorTest {
 
     @Test
     void aMissingStartTransitionIsAnError() {
-        // Symptom without this check: no event is recognised as starting the workflow,
-        // so every execution is reported as an orphan.
         WorkflowSpec spec = minimal();
         spec.getTransitions().removeIf(t -> "STARTED".equals(t.getFrom()));
 
@@ -100,12 +86,8 @@ class WorkflowSpecValidatorTest {
         assertThat(WorkflowSpecValidator.validate(null).isUsable()).isFalse();
     }
 
-    // ── warnings: interpretable, but the engine will know less ────────────────
-
     @Test
     void aStepWithNoWayOutIsAWarningNotAnError() {
-        // Interpretable, so the engine should still run — it will simply never judge an
-        // execution reaching this step as finished.
         WorkflowSpec spec = minimal();
         spec.getSteps().add(step("DEAD_END", Map.of("completed", "DEAD_END_DONE")));
         spec.getTransitions().add(transition("STEP_A", "DEAD_END", "SUCCESS"));
@@ -119,8 +101,6 @@ class WorkflowSpecValidatorTest {
 
     @Test
     void anUnroutedNamedOutcomeIsAWarning() {
-        // The case LOAN_APPROVAL exists to exercise: a step declaring MANUAL_REVIEW that
-        // no transition routes leaves the saga's status undetermined for that outcome.
         WorkflowSpec spec = minimal();
         WorkflowSpec.StepSpec stepA = spec.getSteps().get(0);
         stepA.setOutcomes(Map.of("MANUAL_REVIEW", "A_FLAGGED"));
@@ -144,11 +124,6 @@ class WorkflowSpecValidatorTest {
                 w -> assertThat(w).contains("NEVER_DECLARED").contains("no step declares"));
     }
 
-    /**
-     * L24: since L21 both the map and the steps are consulted, and the map wins where it
-     * speaks. A map placing an event in a different step than the step declaring it is a
-     * mistake in one of the two, and used to decide every detector quietly.
-     */
     @Test
     void validEventTypesDisagreeingWithTheDeclaringStepIsAWarning() {
         WorkflowSpec spec = WorkflowSpecTestFixture.orderSaga();
@@ -184,9 +159,6 @@ class WorkflowSpecValidatorTest {
         assertThat(report.isClean()).isTrue();
     }
 
-    // ── fixtures ──────────────────────────────────────────────────────────────
-
-    /** STARTED -> STEP_A -> COMPLETED. The smallest spec that is fully well formed. */
     private static WorkflowSpec minimal() {
         WorkflowSpec spec = new WorkflowSpec();
         spec.setName("MINIMAL");

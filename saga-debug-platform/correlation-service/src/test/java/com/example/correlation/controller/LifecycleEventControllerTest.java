@@ -17,12 +17,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/**
- * A deployment without Docker reports lifecycle facts itself. What is recorded must say how
- * it was known, because R25 trusts a process report and a probe differently.
- */
 class LifecycleEventControllerTest {
-
     private static final String TOKEN = "t";
     private final ObjectMapper json = new ObjectMapper();
     private final ServiceLifecycleEventRepository repository = mock(ServiceLifecycleEventRepository.class);
@@ -46,7 +41,6 @@ class LifecycleEventControllerTest {
         assertThat(saved.getValue().getScope()).isEqualTo("billing-prod");
     }
 
-    /** Omitting basis must not let a health check be read as a process exit. */
     @Test
     void withoutABasisNothingIsRecorded() throws Exception {
         var response = controller.record(body("""
@@ -80,7 +74,6 @@ class LifecycleEventControllerTest {
         verify(repository, never()).save(any());
     }
 
-    /** A retried webhook is recorded once. */
     @Test
     void aRepeatedReportIsADuplicateNotASecondFact() throws Exception {
         when(repository.existsBySourceAndExternalId(anyString(), anyString())).thenReturn(true);

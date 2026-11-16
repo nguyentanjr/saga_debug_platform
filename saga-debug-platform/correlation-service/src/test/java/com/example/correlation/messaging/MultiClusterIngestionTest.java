@@ -11,17 +11,7 @@ import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
 import org.springframework.kafka.listener.CommonErrorHandler;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 
-/**
- * Reading two Kafka clusters at once.
- *
- * <p>This file covers one of the two claims: that the number of clusters is configuration,
- * so a deployment declaring two gets two listeners without anyone editing Java. The other
- * claim — that telling the clusters apart reaches the source mapping, because a topic name
- * is only unique inside one cluster — is the one that would fail silently, and it is
- * covered where mappings are resolved, in {@code ClusterScopedMappingTest}.
- */
 class MultiClusterIngestionTest {
-
     private static KafkaProperties kafkaProperties(String bootstrap) {
         KafkaProperties properties = new KafkaProperties();
         properties.setBootstrapServers(List.of(bootstrap));
@@ -46,7 +36,6 @@ class MultiClusterIngestionTest {
     @Nested
     @DisplayName("how many listeners get built")
     class ContainerWiring {
-
         @Test
         @DisplayName("a deployment that declares nothing still reads its one cluster")
         void singleClusterNeedsNoDeclaration() {
@@ -74,8 +63,6 @@ class MultiClusterIngestionTest {
             KafkaSourceProperties sources = new KafkaSourceProperties();
             sources.setClusters(List.of(noPattern, cluster("retail-eu", "kafka-eu:9092", "order-.*")));
 
-            // Reading it under an invented pattern would produce findings about a system
-            // nobody asked to observe, so the usable one runs and the other does not.
             assertThat(listenersFor(sources).containerCount()).isEqualTo(1);
         }
 
@@ -87,7 +74,6 @@ class MultiClusterIngestionTest {
                     cluster("retail", "kafka-a:9092", "order-.*"),
                     cluster("retail", "kafka-b:9092", "payment-.*")));
 
-            // A mapping scoped to "retail" could not say which of the two it meant.
             assertThat(listenersFor(sources).containerCount()).isEqualTo(1);
         }
     }

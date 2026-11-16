@@ -20,12 +20,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/**
- * F28: an ordering finding the clocks proved is withdrawn, with the reason, once declared
- * causation reorders its pair; and asking when nothing stands writes nothing.
- */
 class UnprovenOrderWithdrawalTest {
-
     private final AnomalyRepository anomalies = mock(AnomalyRepository.class);
     private final AnomalyDetectionService service = new AnomalyDetectionService(
             mock(SagaInstanceRepository.class), mock(SagaEventRepository.class), anomalies,

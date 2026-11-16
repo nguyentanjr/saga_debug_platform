@@ -15,29 +15,7 @@ import java.util.*;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Systematic coverage of saga shapes, instead of one observed system at a time.
- *
- * <p>Each real system so far exercised a few shapes; the observer was fixed for those and
- * stayed wrong on the ones no system had yet produced (ShopSaga, 2026-10-22: two
- * compensation branches at once, a cancel mid-step, a reply arriving after compensation
- * began). The shapes are finite, so they are enumerated here:
- *
- * <ul>
- *   <li>step structure: sequential (2..4 steps, and 20 for long sagas), parallel fan-out with join;</li>
- *   <li>compensation structure: none, one branch, every completed step;</li>
- *   <li>incident: none, business failure at each step, cancel mid-step, reply after cancel;</li>
- *   <li>compensation mode: concurrent branches, sequential in reverse;</li>
- *   <li>transport: in order, reversed, shuffled, one event delivered twice.</li>
- * </ul>
- *
- * <p>Every generated run is legitimate behaviour of the observed system, so two invariants
- * must hold: the status equals the outcome the generator produced, and no finding against
- * the observed system stands. Findings about the transport itself (arrival order, a
- * redelivery, absent trace context) are allowed where the transport variant produced them.
- */
 class SagaShapeMatrixTest {
-
     private static final Instant T0 = Instant.parse("2026-10-22T00:00:00Z");
     private static final Set<String> ALWAYS_ALLOWED = Set.of("MISSING_TRACE_CONTEXT");
 
@@ -48,7 +26,6 @@ class SagaShapeMatrixTest {
 
     record Ev(String id, String type, Instant at) {}
 
-    /** @param required findings the run must raise: true positives, not false ones */
     record Run(String scenario, List<Ev> events, String expected, Set<String> required) {
         Run(String scenario, List<Ev> events, String expected) { this(scenario, events, expected, Set.of()); }
     }
@@ -78,7 +55,7 @@ class SagaShapeMatrixTest {
         }
         StringBuilder report = new StringBuilder("cells=" + cells + " failing=" + failures.size() + "\n");
         perScenario.forEach((k, v) -> report.append(String.format("  %-14s %4d/%4d failing%n", k, v[1], v[0])));
-        // One line per distinct symptom, with a count and the first cell that shows it.
+
         Map<String, List<String>> bySymptom = new TreeMap<>();
         failures.forEach(f -> bySymptom.computeIfAbsent(f.substring(f.indexOf(" -> ") + 4), k -> new ArrayList<>()).add(f));
         bySymptom.forEach((symptom, hit) -> report.append(String.format("  %4d x %s  e.g. %s%n",
@@ -118,15 +95,13 @@ class SagaShapeMatrixTest {
         if (!o.sagaStatus.equals(run.expected()) || !falseFindings.isEmpty()) {
             return "status=" + o.sagaStatus + " expected=" + run.expected() + " false=" + falseFindings;
         }
-        // A run undone without any step reporting failure: no step failure may be diagnosed.
+
         boolean noStepFailed = run.events().stream().noneMatch(e -> e.type().endsWith("_FAIL"));
         if (noStepFailed && o.candidateRules.stream().anyMatch(r -> r.startsWith("R11:"))) {
             return "diagnosed FORWARD_STEP_FAILURE with no step failure observed";
         }
         return null;
     }
-
-    // ── workflow shapes ───────────────────────────────────────────────────────
 
     private static List<String> steps(Structure s) {
         return switch (s) {
@@ -137,7 +112,6 @@ class SagaShapeMatrixTest {
         };
     }
 
-    /** Direct predecessors of each step. PARALLEL: S1 -> {S2, S3} -> S4. */
     private static Map<String, List<String>> predecessors(Structure s) {
         Map<String, List<String>> pre = new LinkedHashMap<>();
         List<String> steps = steps(s);
@@ -152,7 +126,6 @@ class SagaShapeMatrixTest {
         return pre;
     }
 
-    /** Every step that must complete before this one. */
     private static Set<String> upstream(Structure structure, String step) {
         Set<String> all = new LinkedHashSet<>();
         for (String p : predecessors(structure).get(step)) { all.add(p); all.addAll(upstream(structure, p)); }
@@ -209,9 +182,6 @@ class SagaShapeMatrixTest {
         return t;
     }
 
-    // ── incidents ─────────────────────────────────────────────────────────────
-
-    /** Builds one run's events with strictly increasing business time. */
     private static final class Script {
         final List<Ev> events = new ArrayList<>();
         int second;
@@ -222,7 +192,6 @@ class SagaShapeMatrixTest {
         List<Run> runs = new ArrayList<>();
         List<String> steps = steps(structure);
 
-        // Normal run. PARALLEL interleaves the two arms.
         Script ok = new Script();
         forwardUntil(ok, structure, steps.size(), null);
         runs.add(new Run("normal", ok.events, "COMPLETED"));
@@ -230,7 +199,6 @@ class SagaShapeMatrixTest {
         for (int k = 0; k < steps.size(); k++) {
             String failing = steps.get(k);
 
-            // Business failure at step k: everything upstream completed, compensated.
             Script fail = new Script();
             List<String> done = forwardUntil(fail, structure, k, failing);
             fail.emit(failing + "_REQ");
@@ -239,7 +207,6 @@ class SagaShapeMatrixTest {
             compensate(fail, toUndo, mode);
             runs.add(new Run("fail@" + failing, fail.events, toUndo.isEmpty() ? "FAILED" : "COMPENSATED"));
 
-            // Cancelled while step k is in flight: completed steps and k itself are undone.
             List<String> cancelUndo = new ArrayList<>(done.stream().filter(s -> compensable(compensation, s)).toList());
             if (compensable(compensation, failing)) cancelUndo.add(failing);
             if (cancelUndo.isEmpty()) continue;
@@ -249,14 +216,12 @@ class SagaShapeMatrixTest {
             compensate(cancel, cancelUndo, mode);
             runs.add(new Run("cancel@" + failing, cancel.events, "COMPENSATED"));
 
-            // Same, and the in-flight step's reply arrives after compensation began.
             Script late = new Script();
             forwardUntil(late, structure, k, failing);
             late.emit(failing + "_REQ");
             List<Ev> before = new ArrayList<>(late.events);
             compensate(late, cancelUndo, mode);
-            // The reply lands after each compensation observation in turn, while one is still
-            // open: after a request, and after one branch finished (ShopSaga customer-cancel).
+
             for (int at = before.size(); at < late.events.size() - 1; at++) {
                 Ev reply = new Ev("e-late", failing + "_DONE", late.events.get(at).at().plusMillis(500));
                 List<Ev> withReply = new ArrayList<>(late.events);
@@ -264,10 +229,6 @@ class SagaShapeMatrixTest {
                 runs.add(new Run("lateReply@" + failing + "+" + (at - before.size()), withReply, "COMPENSATED"));
             }
 
-            // The source re-sends the in-flight step's compensation once its declared deadline
-            // (30s) passed unanswered, and both requests are answered (ShopSaga payment-stop:
-            // one refund row, two replies). A retry, not a duplicate.
-            // Re-sent well inside the deadline, it is a duplicate (SC23) and must be reported.
             if (compensable(compensation, failing)) {
                 String undo = "C" + failing;
                 int reqAt = 0;
@@ -295,12 +256,6 @@ class SagaShapeMatrixTest {
         return runs;
     }
 
-    /**
-     * Completes the forward steps before position {@code k} (all of them when k = size).
-     * In PARALLEL, a failing arm's sibling still completes: it owed nothing to the failure.
-     *
-     * @return the steps completed
-     */
     private static List<String> forwardUntil(Script s, Structure structure, int k, String failing) {
         List<String> steps = steps(structure);
         List<String> done = new ArrayList<>();
@@ -311,7 +266,6 @@ class SagaShapeMatrixTest {
         if (k >= 1) { s.emit("S1_REQ"); s.emit("S1_DONE"); done.add("S1"); }
         if (k == 0) return done;
         if (k == 1 || k == 2) {
-            // Failing step is S2 or S3; the other arm starts first and completes.
             String sibling = "S2".equals(failing) ? "S3" : "S2";
             s.emit(sibling + "_REQ");
             s.emit(sibling + "_DONE");

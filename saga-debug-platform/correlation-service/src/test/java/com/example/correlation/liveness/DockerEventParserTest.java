@@ -8,13 +8,7 @@ import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Only a process exit and a start are lifecycle facts. A pause, a SIGSTOP and a network
- * disconnect leave the process alive, and reading them as "down" would turn the stall and
- * partition scenarios (SC27-SC29) into crashes.
- */
 class DockerEventParserTest {
-
     private final DockerEventParser parser =
             new DockerEventParser(new ObjectMapper(), "com.docker.compose.service");
 

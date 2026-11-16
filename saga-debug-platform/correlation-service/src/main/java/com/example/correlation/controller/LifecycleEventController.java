@@ -17,30 +17,9 @@ import java.time.format.DateTimeParseException;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * Lifecycle facts pushed by whatever knows them in a deployment without Docker: a systemd
- * {@code ExecStopPost=} hook, a supervisord event listener, a Kubernetes watcher, an
- * Alertmanager webhook. They land in the same table the Docker collector writes, so R25
- * reads them the same way.
- *
- * <p>{@code basis} is required, not defaulted. A sender that only knows a probe failed must
- * not be read as a runtime that saw the process exit: defaulting to {@code process} would let
- * every health-check integration claim a crash at STRONG_EVIDENCE by omission.
- *
- * <p>Writes evidence, so it takes the same bearer token as {@code /api/ingest}. It is a
- * passive endpoint: the observer still sends nothing to the observed system (ADR 0001).
- *
- * <pre>
- * POST /api/lifecycle-events
- * {"service":"inventory-service","state":"DOWN","at":"2026-10-04T10:00:05Z",
- *  "basis":"process","detail":"exit code 137 (OOM)","source":"systemd","id":"optional",
- *  "scope":"optional, the deployment the service belongs to"}
- * </pre>
- */
 @RestController
 @RequestMapping("/api/lifecycle-events")
 public class LifecycleEventController {
-
     private final ServiceLifecycleEventRepository repository;
     private final IngestAuthorization authorization;
 

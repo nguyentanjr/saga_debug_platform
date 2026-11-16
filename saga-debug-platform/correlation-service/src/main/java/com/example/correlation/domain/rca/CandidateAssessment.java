@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class CandidateAssessment {
-
     private String ruleId;
     private String rootCause;
     private String severity;
@@ -13,17 +12,8 @@ public class CandidateAssessment {
     private List<String> suggestions = new ArrayList<>();
     private String statusReason;
 
-    /**
-     * Who this candidate's claim is about, which decides whether it can answer "what did
-     * the observed system do wrong". Declared by the rule; defaults to the observed
-     * system, so a rule that says nothing about its subject keeps the behaviour it had.
-     */
     private ClaimSubject subject = ClaimSubject.OBSERVED_SYSTEM;
 
-    /**
-     * Where in the execution this candidate's evidence points, and what else the
-     * execution shows before it. Set during selection, not by the rule.
-     */
     private String anchorStepId;
     private java.time.Instant anchorAt;
     private List<String> precededBy = new ArrayList<>();
@@ -125,7 +115,6 @@ public class CandidateAssessment {
             return this;
         }
 
-        /** Declares who the claim is about; omit to keep the observed-system default. */
         public Builder subject(ClaimSubject subject) {
             candidate.setSubject(subject);
             return this;

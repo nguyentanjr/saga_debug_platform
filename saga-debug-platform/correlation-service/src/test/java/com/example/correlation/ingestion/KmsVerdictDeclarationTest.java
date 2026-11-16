@@ -22,17 +22,7 @@ import com.example.correlation.workflow.WorkflowSpec;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
-/**
- * EXT-KMS: the shipped kms declarations against the four outcomes of the Streams join.
- *
- * <p>The verdict on t_order said Success or Failed in stockStatus, and both were mapped to
- * one event that the workflow reads as the join completing. Retest 2026-10-11 (sylleryum
- * b474ba3): four orders persisted as Failed/Rollback or Failed/Failed were all reported
- * COMPLETED with MULTI_TERMINAL_CONFLICT as their root cause. Events below are the shape
- * captured there, in the order the source produced them.
- */
 class KmsVerdictDeclarationTest {
-
     private static final Instant T0 = Instant.parse("2026-10-11T23:20:00Z");
     private static WorkflowSpec spec;
     private static Map<String, String> verdicts;

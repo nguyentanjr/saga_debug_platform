@@ -39,39 +39,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * Judging two steps the workflow declares concurrent.
- *
- * <h2>What went wrong before</h2>
- * {@code explainTransition} asked where the source step's outcome is declared to go, and
- * called the target invalid when it was not there and not downstream of there. That is the
- * right question for two steps the graph puts in an order. It is not a question at all for
- * two steps the graph declares run at the same time.
- *
- * <p>{@code sylleryum/kafka-microservices-with-saga} has stock and payment both consuming
- * the order event, neither waiting for the other:
- *
- * <pre>
- *   declared:  RECEIVE_ORDER -> RESERVE_STOCK  (SUCCESS)
- *              RECEIVE_ORDER -> TAKE_PAYMENT   (SUCCESS)
- *   observed:  TAKE_PAYMENT, then RESERVE_STOCK
- *   answered:  INVALID  ("TAKE_PAYMENT -> RESERVE_STOCK is not declared")
- * </pre>
- *
- * <p>Measured live against that system: the finding stood against four healthy COMPLETED
- * runs, flipped direction with delivery order, and — once RCA promotion landed — was
- * promoted as the root cause on five of six executions, outranking the genuine
- * COMPENSATION_STEP_FAILURE on the compensating one.
- *
- * <p>The specification already said everything needed to avoid it. Two targets of one step
- * under the <em>same</em> condition both happen; two under different conditions are
- * alternatives. These tests pin that reading, and pin just as hard what must not change:
- * a decision's branches, a step that really did go somewhere forbidden, and a run whose
- * middle observation simply has not arrived.
- */
 class ParallelTransitionSemanticsTest {
-
-    /** No source has declared how it words failures -- what R01/R23 see when untold. */
     private static final FailureSignalRegistry EMPTY_FAILURE_SIGNALS =
             new FailureSignalRegistry("");
 
@@ -139,8 +107,6 @@ class ParallelTransitionSemanticsTest {
         orderSaga = registry.byType("ORDER_SAGA").orElseThrow();
         loanApproval = registry.byType("LOAN_APPROVAL").orElseThrow();
 
-        // The real detector, not a mock: the question is whether an INVALID_TRANSITION row
-        // gets written, and a mock could only report that the detector was consulted.
         AnomalyDetectionService anomalyDetectionService = new AnomalyDetectionService(
                 sagaInstanceRepository, sagaEventRepository, anomalyRepository,
                 registry, new ObjectMapper(), new DetectionProperties(),
@@ -151,12 +117,6 @@ class ParallelTransitionSemanticsTest {
                 new DeduplicationCache(), registry, new ObjectMapper());
     }
 
-    // ══ sibling arms of a declared fan-out ════════════════════════════════════
-
-    /**
-     * The headline, in the order the bug was first seen. Neither arm hands off to the
-     * other, so neither order between them can contradict the specification.
-     */
     @Test
     void oneArmObservedAfterTheOtherIsNotAnInvalidTransition() {
         assertThat(parallelCheckout.judgeTransition(
@@ -164,7 +124,6 @@ class ParallelTransitionSemanticsTest {
                 .isEqualTo(TransitionVerdict.UNKNOWN);
     }
 
-    /** And in the other order, because delivery order is what used to decide the verdict. */
     @Test
     void theSameTwoArmsInReverseOrderAreAlsoNotInvalid() {
         assertThat(parallelCheckout.judgeTransition(
@@ -172,17 +131,12 @@ class ParallelTransitionSemanticsTest {
                 .isEqualTo(TransitionVerdict.UNKNOWN);
     }
 
-    /** The relation the verdict now rests on, stated directly and symmetric. */
     @Test
     void theSpecificationReportsTheTwoArmsAsConcurrent() {
         assertThat(parallelCheckout.areConcurrent("RUN_FRAUD_CHECK", "RESERVE_SEATS")).isTrue();
         assertThat(parallelCheckout.areConcurrent("RESERVE_SEATS", "RUN_FRAUD_CHECK")).isTrue();
     }
 
-    /**
-     * Concurrency is a claim about two arms, not about everything near a fan-out. The step
-     * that fans out precedes both, and the step behind the join follows both.
-     */
     @Test
     void stepsOrderedAroundTheFanOutAreNotConcurrentWithItsArms() {
         assertThat(parallelCheckout.areConcurrent("OPEN_CART", "RESERVE_SEATS")).isFalse();
@@ -190,9 +144,6 @@ class ParallelTransitionSemanticsTest {
         assertThat(parallelCheckout.areConcurrent("SETTLE_ORDER", "RESERVE_SEATS")).isFalse();
     }
 
-    // ══ what the fan-out must not swallow ═════════════════════════════════════
-
-    /** A declared handoff is still exactly that. */
     @Test
     void aDeclaredSequentialTransitionRemainsValid() {
         assertThat(parallelCheckout.judgeTransition(
@@ -203,7 +154,6 @@ class ParallelTransitionSemanticsTest {
                 .isEqualTo(TransitionVerdict.VALID);
     }
 
-    /** An arm handing off to the step behind the join is a declared transition too. */
     @Test
     void anArmHandingOffToTheJoinRemainsValid() {
         assertThat(parallelCheckout.judgeTransition(
@@ -211,10 +161,6 @@ class ParallelTransitionSemanticsTest {
                 .isEqualTo(TransitionVerdict.VALID);
     }
 
-    /**
-     * A run moving backwards through a fan-out workflow is still contradicting it: the
-     * join is downstream of the arm, so the two are ordered and the order was broken.
-     */
     @Test
     void movingBackwardsAcrossAJoinIsStillInvalid() {
         assertThat(parallelCheckout.judgeTransition(
@@ -222,12 +168,6 @@ class ParallelTransitionSemanticsTest {
                 .isEqualTo(TransitionVerdict.INVALID);
     }
 
-    /**
-     * Alternatives are not arms. ASSESS_RISK routes APPROVED to disbursement and
-     * MANUAL_REVIEW to review — two targets under <em>different</em> conditions, so exactly
-     * one of them runs and the order between them still means something. This is the case
-     * that would break if concurrency were read off mutual unreachability alone.
-     */
     @Test
     void branchesOfADecisionAreNotConcurrentAndStayInvalid() {
         assertThat(loanApproval.areConcurrent("DISBURSE_FUNDS", "HUMAN_REVIEW")).isFalse();
@@ -235,7 +175,6 @@ class ParallelTransitionSemanticsTest {
                 .isEqualTo(TransitionVerdict.INVALID);
     }
 
-    /** A linear workflow has no fan-out at all, so nothing about it changes. */
     @Test
     void aWorkflowWithoutParallelismIsUnaffected() {
         assertThat(orderSaga.areConcurrent("PROCESS_PAYMENT", "RESERVE_INVENTORY")).isFalse();
@@ -247,11 +186,6 @@ class ParallelTransitionSemanticsTest {
                 .isEqualTo(TransitionVerdict.INVALID);
     }
 
-    /**
-     * Missing intermediate evidence stays UNKNOWN and still names what is missing. The
-     * concurrency guard sits after the reachability answer, so it cannot turn a
-     * "waiting on an observation" into anything else.
-     */
     @Test
     void aMissingIntermediateObservationIsStillUnknownAndStillNamed() {
         WorkflowSpec.TransitionJudgment judgment = orderSaga.explainTransition(
@@ -261,12 +195,6 @@ class ParallelTransitionSemanticsTest {
         assertThat(judgment.stepsInBetween()).containsExactly("PROCESS_PAYMENT");
     }
 
-    // ══ end to end, through the real detector ═════════════════════════════════
-
-    /**
-     * A healthy run of a parallel workflow, with the arms observed in the order that used
-     * to condemn it. Nothing is wrong with it and nothing is filed against it.
-     */
     @Test
     void aHealthyParallelRunRaisesNoInvalidTransition() {
         observe("e1", "CART_OPENED", 0);
@@ -278,7 +206,6 @@ class ParallelTransitionSemanticsTest {
         assertThat(run().getStatus()).isEqualTo(SagaStatus.COMPLETED);
     }
 
-    /** And with the two arms the other way round, which is the same run to the observer. */
     @Test
     void theSameRunWithItsArmsSwappedAlsoRaisesNothing() {
         observe("e1", "CART_OPENED", 0);
@@ -290,19 +217,17 @@ class ParallelTransitionSemanticsTest {
         assertThat(run().getStatus()).isEqualTo(SagaStatus.COMPLETED);
     }
 
-    /** A genuinely forbidden move through the same workflow is still filed. */
     @Test
     void aRunThatGoesBackwardsThroughAParallelWorkflowIsStillReported() {
         observe("e1", "CART_OPENED", 0);
         observe("e2", "FRAUD_CHECK_PASSED", 1);
         observe("e3", "SEATS_RESERVED", 2);
-        // Before the join: the run is still open, so this is a handoff back to its start.
+
         observe("e4", "CART_OPENED", 3);
 
         assertThat(raised()).contains(AnomalyType.INVALID_TRANSITION);
     }
 
-    /** An arm reporting again after the join ended the run is an observation after the ending. */
     @Test
     void anArmReportingAfterTheJoinIsAPostTerminalObservation() {
         observe("e1", "CART_OPENED", 0);
@@ -315,13 +240,6 @@ class ParallelTransitionSemanticsTest {
                 .doesNotContain(AnomalyType.INVALID_TRANSITION);
     }
 
-    // ══ the compensating run: R10 must survive, R12 must not appear ═══════════
-
-    /**
-     * The compensating case from the observed system: one arm succeeded, the other was
-     * refused, and the successful arm is being rolled back. The only thing wrong with this
-     * run is that the rollback is never acknowledged.
-     */
     @Test
     void aCompensatingParallelRunRaisesNoInvalidTransition() {
         observeCompensatingFulfilment();
@@ -330,15 +248,6 @@ class ParallelTransitionSemanticsTest {
         assertThat(run().getStatus()).isEqualTo(SagaStatus.COMPENSATING);
     }
 
-    /**
-     * And so the diagnosis is the real one. The findings fed to RCA here are the ones the
-     * real detector just raised, plus the MISSING_COMPENSATION_ACK that the scheduled
-     * compensation-ack pass adds once its deadline elapses — a wait, not a judgement, and
-     * not what this test is about.
-     *
-     * <p>Before this change the same run promoted INVALID_TRANSITION, because R12 anchors
-     * at a step and R10 anchors nowhere, so the false finding sorted first.
-     */
     @Test
     void aCompensatingParallelRunPromotesTheCompensationFailureNotATransitionFinding() {
         observeCompensatingFulfilment();
@@ -354,10 +263,6 @@ class ParallelTransitionSemanticsTest {
                 .noneSatisfy(c -> assertThat(c.getRuleId()).isEqualTo("R12"));
     }
 
-    /**
-     * R12 is not weakened, only made answerable. Given a transition finding that a run
-     * genuinely earned, the rule still fires and can still be promoted.
-     */
     @Test
     void agenuineTransitionFindingIsStillDiagnosedAsSuch() {
         RcaResult result = analyse(List.of(anomaly(AnomalyType.INVALID_TRANSITION)));
@@ -366,9 +271,6 @@ class ParallelTransitionSemanticsTest {
         assertThat(result.getRuleId()).isEqualTo("R12");
     }
 
-    // ── helpers ───────────────────────────────────────────────────────────────
-
-    /** One arm held, the other refused, the held one being released. */
     private void observeCompensatingFulfilment() {
         observe("f1", "BASKET_ACCEPTED", 0);
         observe("f2", "FUNDS_HELD", 1);
@@ -402,7 +304,6 @@ class ParallelTransitionSemanticsTest {
         return anomaly;
     }
 
-    /** The real RCA pipeline over the findings this run is left with. */
     private RcaResult analyse(List<Anomaly> standing) {
         SagaInstance saga = run() != null ? run() : new SagaInstance();
         saga.setSagaId(RUN.canonical());

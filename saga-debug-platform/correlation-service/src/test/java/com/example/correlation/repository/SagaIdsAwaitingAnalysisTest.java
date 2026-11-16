@@ -22,10 +22,6 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * L17: which ended runs the auto-RCA sweep picks up. Actual query on an actual schema;
- * the l17.* properties run it on Postgres, as EventTimeProvenanceTest does with f6.*.
- */
 @DataJpaTest(showSql = false, properties = {
         "spring.datasource.url=${l17.jdbc.url:jdbc:h2:mem:l17;MODE=PostgreSQL;DB_CLOSE_DELAY=-1}",
         "spring.datasource.driver-class-name=${l17.jdbc.driver:org.h2.Driver}",
@@ -38,10 +34,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class SagaIdsAwaitingAnalysisTest {
-
     private static final List<SagaStatus> ENDED_WITHOUT_SUCCESS =
             List.of(SagaStatus.FAILED, SagaStatus.COMPENSATED);
-    /** Source clock: days before the platform read anything. */
+
     private static final Instant STAMPED = Instant.parse("2026-01-01T00:00:00Z");
     private static final Instant RECEIVED = Instant.parse("2026-01-05T00:00:00Z");
 
@@ -58,10 +53,6 @@ class SagaIdsAwaitingAnalysisTest {
         sagas.deleteAll();
     }
 
-    /**
-     * The first live hotel run: stamped 16:03, read 16:05. A window on last_updated, the
-     * source's clock, would have missed it; received_at does not.
-     */
     @Test
     void anEndedRunReadLongAfterItsSourceStampedItIsPickedUp() {
         String failed = run(SagaStatus.FAILED, RECEIVED);
@@ -78,7 +69,6 @@ class SagaIdsAwaitingAnalysisTest {
         assertThat(awaiting()).isEmpty();
     }
 
-    /** Late: evidence received after the analysis makes that analysis stale. */
     @Test
     void anObservationReceivedAfterTheAnalysisMakesTheRunDueAgain() {
         String id = run(SagaStatus.FAILED, RECEIVED);
@@ -88,7 +78,6 @@ class SagaIdsAwaitingAnalysisTest {
         assertThat(awaiting()).containsExactly(id);
     }
 
-    /** Healthy and unfinished runs belong to the finding-driven pass, not this one. */
     @Test
     void completedAndRunningRunsAreLeftAlone() {
         run(SagaStatus.COMPLETED, RECEIVED);
@@ -98,13 +87,6 @@ class SagaIdsAwaitingAnalysisTest {
         assertThat(awaiting()).isEmpty();
     }
 
-    /**
-     * A run that went quiet, was diagnosed while waiting, and then completed: the diagnosis
-     * was made on half the evidence. Nothing new was detected when it completed (a source
-     * without per-step completion events gives no step timeout), so the finding-driven pass,
-     * which waits for a new finding, never looked again (FTGO pause runs 7 and 13: R06 never
-     * assessed). Completed runs with findings are due again when evidence outdates the analysis.
-     */
     @Test
     void aCompletedRunWithFindingsIsDueWhenEvidenceArrivesAfterItsDiagnosis() {
         String recovered = run(SagaStatus.COMPLETED, RECEIVED);
@@ -117,18 +99,14 @@ class SagaIdsAwaitingAnalysisTest {
 
     @Test
     void aCompletedRunWithoutFindingsOrWithAFreshDiagnosisIsLeftAlone() {
-        run(SagaStatus.COMPLETED, RECEIVED);                       // healthy: nothing to diagnose
+        run(SagaStatus.COMPLETED, RECEIVED);
         String fresh = run(SagaStatus.COMPLETED, RECEIVED);
         finding(fresh, RECEIVED.plusSeconds(1));
-        analysed(fresh, RECEIVED.plusSeconds(2));                  // already saw everything
+        analysed(fresh, RECEIVED.plusSeconds(2));
 
         assertThat(completedWithFindingsAwaiting()).isEmpty();
     }
 
-    /**
-     * EXT-OVERLOAD-FALSE-FINDINGS: a diagnosis written after the last observation but before
-     * a finding it cited was withdrawn is stale, and the finding-driven pass has to see it.
-     */
     @Test
     void aWithdrawalAfterTheDiagnosisCountsAsAChangedFinding() {
         String id = run(SagaStatus.COMPLETED, RECEIVED);
@@ -143,8 +121,6 @@ class SagaIdsAwaitingAnalysisTest {
         assertThat(anomalies.findLatestDetectedAtBySagaId(id)).isEqualTo(RECEIVED.plusSeconds(2));
         assertThat(anomalies.findSagaIdsWithAnomaliesSince(RECEIVED.plusSeconds(2))).containsExactly(id);
     }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private List<String> completedWithFindingsAwaiting() {
         return sagas.findSagaIdsWithFindingsAwaitingAnalysis(List.of(SagaStatus.COMPLETED), PageRequest.of(0, 50));

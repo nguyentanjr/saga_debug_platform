@@ -34,30 +34,9 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * Stating the diagnosis that was reached.
- *
- * <h2>What went wrong before</h2>
- * The selector ranked candidates, assessed one of them {@code STRONG_EVIDENCE}, published
- * it in {@code candidates} and reported {@code rcaStatus = EVIDENCE_AVAILABLE} — and the
- * saved {@link RcaResult} still carried {@code rootCause = null} and {@code ruleId = null},
- * because {@code RcaService} pinned both to null when the score-free model replaced the
- * older single-primary one. Validation against three unrelated production-shaped saga
- * systems produced the same result every time: the analysis was correct, complete, and
- * never said what it had concluded.
- *
- * <p>The fix reads the answer the ranking already gives instead of recomputing one. These
- * tests pin both halves of that: what gets promoted, and — more importantly — what must
- * not. Promotion is the one place where the platform stops hedging and names a cause, so
- * everything below is about the boundary of that claim.
- */
 class RcaPromotionTest {
-
-    /** No source has declared how it words failures -- what R01/R23 see when untold. */
     private static final FailureSignalRegistry EMPTY_FAILURE_SIGNALS =
             new FailureSignalRegistry("");
-
-    // ══ the selector: which candidate, if any, is promoted ════════════════════
 
     private final RcaSelector selector = new RcaSelector();
 
@@ -74,10 +53,6 @@ class RcaPromotionTest {
         assertThat(result.getPrimary().getRootCause()).isEqualTo("MULTI_TERMINAL_CONFLICT");
     }
 
-    /**
-     * The promoted candidate is one of the listed ones, not a copy built beside them, so
-     * the reported cause and the candidate list cannot disagree about its status.
-     */
     @Test
     void thePromotedCandidateIsTheOneInTheCandidateList() {
         RcaSelector.SelectionResult result = selector.select(
@@ -89,7 +64,6 @@ class RcaPromotionTest {
         assertThat(result.getPrimary().getStatus()).isEqualTo(CandidateStatus.STRONG_EVIDENCE);
     }
 
-    /** Ranking is unchanged; promotion only reads its first strongly-evidenced entry. */
     @Test
     void promotionFollowsTheExistingRankingRatherThanRuleId() {
         CandidateAssessment weakerButFirstAlphabetically =
@@ -106,11 +80,6 @@ class RcaPromotionTest {
         assertThat(result.getPrimary().getRuleId()).isEqualTo("R12");
     }
 
-    /**
-     * A withdrawn candidate is not a quieter candidate. The fallback rules are ruled out
-     * the moment anything specific exists, and a ruled-out candidate must never be the
-     * thing the platform names.
-     */
     @Test
     void aRuledOutCandidateIsNotPromoted() {
         CandidateAssessment fallback =
@@ -125,7 +94,6 @@ class RcaPromotionTest {
         assertThat(result.getPrimary().getRuleId()).isEqualTo("R07");
     }
 
-    /** And when the only candidate has been ruled out, nothing is promoted at all. */
     @Test
     void aSelectionOfNothingButRuledOutCandidatesPromotesNothing() {
         CandidateAssessment excluded =
@@ -138,11 +106,6 @@ class RcaPromotionTest {
         assertThat(result.getPrimary()).isNull();
     }
 
-    /**
-     * Supporting evidence corroborates a finding; it does not establish one. Weak evidence
-     * is a hypothesis by construction. Neither is promoted, and the status the selector
-     * reports for each is untouched.
-     */
     @Test
     void nothingWeakerThanStrongEvidenceIsPromoted() {
         RcaSelector.SelectionResult supportingOnly = selector.select(
@@ -169,8 +132,6 @@ class RcaPromotionTest {
         assertThat(result.getPrimary()).isNull();
     }
 
-    // ══ the service: the promotion reaching the saved result ══════════════════
-
     private AnomalyRepository anomalyRepository;
     private RcaResultRepository rcaResultRepository;
     private List<Anomaly> storedAnomalies;
@@ -192,8 +153,7 @@ class RcaPromotionTest {
                 .thenReturn(List.of(event("ORDER_CREATED")));
 
         anomalyRepository = mock(AnomalyRepository.class);
-        // Mirrors the real query: RCA reads only the findings that still stand, so a
-        // withdrawn one is invisible to it. See AnomalyRepository#findStandingBySagaId.
+
         when(anomalyRepository.findStandingBySagaId(anyString()))
                 .thenAnswer(call -> storedAnomalies.stream()
                         .filter(a -> a.getRetractedAt() == null)
@@ -224,11 +184,6 @@ class RcaPromotionTest {
                 null);
     }
 
-    /**
-     * The headline. R03 is a shipped rule whose entire condition is one anomaly type and
-     * whose tier is STRONG_EVIDENCE, so this is the ordinary path through the real
-     * registry rather than a hand-built candidate.
-     */
     @Test
     void aStrongCandidateReachesTheSavedResult() {
         storedAnomalies.add(anomaly(1L, AnomalyType.MULTI_TERMINAL_CONFLICT));
@@ -241,10 +196,6 @@ class RcaPromotionTest {
         assertThat(result.getPrimaryRootCauses()).containsExactly("MULTI_TERMINAL_CONFLICT");
     }
 
-    /**
-     * Promoting a cause is not grounds for inventing a score. The score-free schema
-     * dropped confidence deliberately, and this fix did not bring it back.
-     */
     @Test
     void promotionDoesNotInventAConfidenceScore() {
         storedAnomalies.add(anomaly(1L, AnomalyType.MULTI_TERMINAL_CONFLICT));
@@ -252,11 +203,6 @@ class RcaPromotionTest {
         assertThat(rcaService.analyze("saga-1").getConfidence()).isNull();
     }
 
-    /**
-     * A withdrawn finding cannot become the root cause. The same anomaly promotes when it
-     * stands and disappears entirely once retracted — so the platform cannot publish as a
-     * diagnosis something it has already said is not true of the run.
-     */
     @Test
     void retractedEvidenceCannotBecomeTheRootCause() {
         Anomaly withdrawn = anomaly(1L, AnomalyType.MULTI_TERMINAL_CONFLICT);
@@ -275,14 +221,6 @@ class RcaPromotionTest {
         assertThat(afterRetraction.getPrimaryRootCauses()).isEmpty();
     }
 
-    /**
-     * No qualifying candidate leaves the fields exactly as they were before this change.
-     *
-     * <p>A saga still running with only a SAGA_STUCK finding against it is the case all
-     * three validated systems produced: nothing matches a declared rule, and the only
-     * candidates built are the R21/R20 fallbacks, which are weak by construction. This is
-     * the shape the platform must keep refusing to diagnose.
-     */
     @Test
     void noQualifyingCandidateLeavesRootCauseAndRuleIdNull() {
         analysedSaga.setStatus(SagaStatus.IN_PROGRESS);
@@ -296,17 +234,6 @@ class RcaPromotionTest {
         assertThat(result.getPrimaryRootCauses()).isEmpty();
     }
 
-    /**
-     * The other half of the same guarantee: a stuck run that later ended does have a strong
-     * candidate, and that one is promoted. Kept beside the test above so the difference
-     * stays visible — it is the saga's own status, not the anomaly, that decides.
-     *
-     * <p>The label changed with F5 and the guarantee did not. R06 used to answer
-     * {@code TRANSIENT_SERVICE_FAILURE} here, a claim about the source's health that the
-     * silence could not support; it now answers {@code RECOVERED_AFTER_SILENCE}, a claim
-     * about the execution, which is what was observed. What this test is for — a STRONG
-     * candidate reaches promotion — is unaffected either way.
-     */
     @Test
     void aRecoveredStuckRunPromotesTheStrongCandidateItAlreadyHad() {
         storedAnomalies.add(anomaly(9L, AnomalyType.SAGA_STUCK));
@@ -317,21 +244,6 @@ class RcaPromotionTest {
         assertThat(result.getRuleId()).isEqualTo("R06");
     }
 
-    /**
-     * F5, stated as the thing that must not come back: silence plus an ending must not
-     * produce a claim about the source.
-     *
-     * <p>The evidence is one measured gap and one terminal status. A source that recovered
-     * on its own, a source someone restarted, and a source that was reachable all along
-     * while its events arrived late are indistinguishable in it — and in SC04 and SC16,
-     * the scenarios this rule was built against, the truth was the second: a hand-typed
-     * {@code docker start}. The old answer was not merely unproven, it was wrong, and it
-     * was given at STRONG.
-     *
-     * <p>Asserted as an absence over the whole result rather than as one label being
-     * replaced by another, so that reintroducing the claim under a new name, or at a lower
-     * tier, fails here too.
-     */
     @Test
     void silenceFollowedByAnEndingClaimsNothingAboutTheSourcesHealth() {
         storedAnomalies.add(anomaly(9L, AnomalyType.SAGA_STUCK));
@@ -346,12 +258,6 @@ class RcaPromotionTest {
         assertThat(result.getRootCause()).isEqualTo("RECOVERED_AFTER_SILENCE");
     }
 
-    /**
-     * L15: R14 is declared a claim about this platform's own reading order, and its advice
-     * used to send the reader to the source's Kafka partition keys — on the live hotel run
-     * whose four topics simply were not ordered against each other. The advice now points
-     * where the claim does.
-     */
     @Test
     void outOfOrderDeliveryAdvisesAboutTheReadingNotTheSource() {
         storedAnomalies.add(anomaly(1L, AnomalyType.OUT_OF_ORDER));
@@ -364,7 +270,6 @@ class RcaPromotionTest {
                 .anyMatch(s -> s.contains("observer"));
     }
 
-    /** A healthy run still reports nothing, and still needs no diagnosis. */
     @Test
     void aRunWithNoAnomaliesPromotesNothing() {
         RcaResult result = rcaService.analyze("saga-1");
@@ -373,8 +278,6 @@ class RcaPromotionTest {
         assertThat(result.getRuleId()).isNull();
         assertThat(result.getPrimaryRootCauses()).isEmpty();
     }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private static CandidateAssessment candidate(String ruleId, String rootCause,
             CandidateStatus tier) {

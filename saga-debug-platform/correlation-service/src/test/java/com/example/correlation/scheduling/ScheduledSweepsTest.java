@@ -26,13 +26,7 @@ import com.example.correlation.service.AnomalyDetectionService;
 import com.example.correlation.service.RcaService;
 import com.example.correlation.service.RetentionService;
 
-/**
- * What this class is for is not the delegation itself but the two properties that are
- * easy to lose by accident: that <em>every</em> scheduled sweep goes through a lease, and
- * that a sweep whose lease was refused does no work at all.
- */
 class ScheduledSweepsTest {
-
     private SweepLease lease;
     private AnomalyDetectionService detection;
     private RcaService rca;
@@ -50,7 +44,6 @@ class ScheduledSweepsTest {
         sweeps = new ScheduledSweeps(lease, detection, rca, retentionProvider);
     }
 
-    /** Grants every lease and runs the work inline, as a real uncontended lease does. */
     private void grantEveryLease() {
         when(lease.runExclusively(anyString(), any(Duration.class), any(Runnable.class)))
                 .thenAnswer(call -> {
@@ -161,8 +154,6 @@ class ScheduledSweepsTest {
 
         withoutRetention.purgeExpiredSagas();
 
-        // Not merely "did not purge": it must not appear in the lease table at all, or an
-        // operator reading it sees a purge that lost a race it never entered.
         verify(lease, never()).runExclusively(anyString(), any(Duration.class), any(Runnable.class));
         verifyNoInteractions(retention);
     }

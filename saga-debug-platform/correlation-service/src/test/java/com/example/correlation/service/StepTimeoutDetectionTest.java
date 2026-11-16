@@ -24,21 +24,11 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-/**
- * Compares the two step-timeout measurements on the same event streams.
- *
- * <p>These tests pin down where the adjacency measurement reports the wrong answer.
- * They are written to keep failing for LEGACY on purpose: the legacy assertions
- * document current behaviour so the switch to PROJECTION has a documented delta,
- * rather than asserting that the legacy behaviour is correct.
- */
 class StepTimeoutDetectionTest {
-
     private static final Instant T0 = Instant.parse("2026-01-01T00:00:00Z");
 
     private final WorkflowSpec spec = WorkflowSpecTestFixture.orderSaga();
 
-    // PROCESS_PAYMENT declares a 10s timeout in the workflow spec.
     private final List<SagaEvent> slowPayment = List.of(
             event("e1", "ORDER_CREATED", T0),
             event("e2", "PAYMENT_COMPLETED", T0.plusSeconds(12)),
@@ -52,11 +42,6 @@ class StepTimeoutDetectionTest {
                 .isEqualTo("PROCESS_PAYMENT");
     }
 
-    /**
-     * An event belonging to no declared step is enough to hide the timeout, because
-     * the adjacency measurement restarts from whatever event precedes the one it is
-     * measuring. The execution being observed is unchanged.
-     */
     @Test
     void unrelatedObservationHidesTheTimeoutFromTheLegacyMeasurement() {
         List<SagaEvent> withNoise = new ArrayList<>(slowPayment);
@@ -67,12 +52,6 @@ class StepTimeoutDetectionTest {
                 .isEqualTo("PROCESS_PAYMENT");
     }
 
-    /**
-     * The same defect on the production path: PAYMENT_RETRY is a real event on a
-     * subscribed topic, and it is not listed in {@code validEventTypes}, so each retry
-     * resets the adjacency measurement. A payment step that took 11s is measured as
-     * the 2s between the last retry and the failure.
-     */
     @Test
     void retriesHideTheTimeoutFromTheLegacyMeasurement() {
         List<SagaEvent> retriedPayment = List.of(
@@ -91,14 +70,6 @@ class StepTimeoutDetectionTest {
                 .contains("over 4 attempt(s)");
     }
 
-    /**
-     * F20, reproduced live on SC24: a compensation that starts 35s after the failure and
-     * then completes in 5s. The adjacency walk measures the refund step from the forward
-     * failure to the refund's own start event and reports a 35s refund against its 10s
-     * timeout. A step cannot overrun before it starts; the 35s is the delay before it,
-     * which DELAYED_COMPENSATION already reports, so the legacy finding counts one gap
-     * twice. The projection measures the step from its observed start.
-     */
     private final List<SagaEvent> lateButQuickRefund = List.of(
             event("e1", "ORDER_CREATED", T0),
             event("e2", "PAYMENT_COMPLETED", T0.plusSeconds(4)),
@@ -114,7 +85,6 @@ class StepTimeoutDetectionTest {
                 .isNull();
     }
 
-    /** And the projection still reports a refund that is itself slow, measured from its start. */
     @Test
     void aSlowStepWithAnObservedStartIsStillReported() {
         List<SagaEvent> slowRefund = List.of(
@@ -131,7 +101,6 @@ class StepTimeoutDetectionTest {
                 .contains("start=OBSERVED_START");
     }
 
-    /** The shipped default is the projection (F20); SHADOW remains available for comparison. */
     @Test
     void theDefaultMeasurementIsTheProjection() {
         assertThat(new DetectionProperties().getStepTimeoutMode())
@@ -143,8 +112,6 @@ class StepTimeoutDetectionTest {
         List<SagaEvent> withNoise = new ArrayList<>(slowPayment);
         withNoise.add(event("e-noise", "AUDIT_PING", T0.plusSeconds(11)));
 
-        // Legacy finds nothing here, so shadow mode must also write nothing:
-        // running the projection alongside must not change what is persisted.
         assertThat(findingStep(DetectionProperties.StepTimeoutMode.SHADOW, withNoise)).isNull();
     }
 
@@ -169,12 +136,6 @@ class StepTimeoutDetectionTest {
         verifyNoInteractions(repository);
     }
 
-    // ── F12: which clocks a duration was measured between ────────────────────
-
-    /**
-     * Both ends declared by the source: the finding says so, and claims no more — two
-     * services' declared times can still disagree, but neither end is transport time.
-     */
     @Test
     void aDurationBetweenTwoDeclaredTimesSaysSo() {
         List<SagaEvent> declared = withSources(EventTimeSource.DECLARED, EventTimeSource.DECLARED);
@@ -186,11 +147,6 @@ class StepTimeoutDetectionTest {
         }
     }
 
-    /**
-     * One end declared and one taken from the transport: the interval spans two different
-     * clocks and includes whatever separates them. Before F12 it read exactly like the
-     * case above.
-     */
     @Test
     void aDurationAcrossADeclaredAndATransportTimeIsMarkedMixed() {
         List<SagaEvent> mixed = withSources(EventTimeSource.DECLARED, EventTimeSource.TRANSPORT);
@@ -204,7 +160,6 @@ class StepTimeoutDetectionTest {
         }
     }
 
-    /** Rows written before V17 carry no origin, and the finding does not invent one. */
     @Test
     void aDurationOverTimesOfUnrecordedOriginSaysSo() {
         List<SagaEvent> legacy = withSources(null, EventTimeSource.DECLARED);
@@ -216,7 +171,6 @@ class StepTimeoutDetectionTest {
         }
     }
 
-    /** slowPayment, with the origin of the two timestamps a PROCESS_PAYMENT duration spans. */
     private List<SagaEvent> withSources(EventTimeSource start, EventTimeSource end) {
         SagaEvent created = event("e1", "ORDER_CREATED", T0);
         created.setEventTimeSource(start);
@@ -227,12 +181,10 @@ class StepTimeoutDetectionTest {
         return List.of(created, paid, reserved);
     }
 
-    // ── helpers ───────────────────────────────────────────────────────────────
-
     private String findingStep(DetectionProperties.StepTimeoutMode mode, List<SagaEvent> events) {
         Anomaly anomaly = capture(mode, events);
         if (anomaly == null) return null;
-        // thresholdSource is "workflow:<STEP>.timeout"
+
         String source = anomaly.getThresholdSource();
         return source.substring("workflow:".length(), source.indexOf(".timeout"));
     }
@@ -245,10 +197,6 @@ class StepTimeoutDetectionTest {
             return invocation.getArgument(0);
         });
 
-        // The production caller passes findBySagaIdOrderByTimestampAsc(...), so the
-        // legacy adjacency walk always sees events in event-time order. Reproduce that
-        // here; otherwise the comparison would measure list order rather than the two
-        // measurement strategies.
         List<SagaEvent> ordered = events.stream()
                 .sorted(java.util.Comparator.comparing(SagaEvent::getTimestamp))
                 .toList();

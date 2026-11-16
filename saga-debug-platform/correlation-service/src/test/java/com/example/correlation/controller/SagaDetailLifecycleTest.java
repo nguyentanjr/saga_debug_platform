@@ -24,13 +24,7 @@ import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * The detail view puts the runtime's reports beside the run's events: each declared
- * service's state when the run began, then every change while it ran — not every restart
- * the host saw in the last hour.
- */
 class SagaDetailLifecycleTest {
-
     private static final Instant T0 = Instant.parse("2026-10-01T10:00:00Z");
 
     @Test

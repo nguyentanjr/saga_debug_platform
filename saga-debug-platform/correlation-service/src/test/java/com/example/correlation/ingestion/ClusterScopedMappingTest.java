@@ -11,22 +11,7 @@ import org.junit.jupiter.api.Test;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
-/**
- * Telling two clusters' identically named topics apart.
- *
- * <p>This is the half of multi-cluster reading that would fail silently. A topic name is
- * unique inside one cluster and nowhere else: two estates both having {@code order-created}
- * is ordinary, not perverse. If the cluster a record came from does not reach the source
- * mapping, the platform reads both under one mapping, files both systems' runs in one
- * identity namespace, and then reports the differences between two unrelated systems as
- * faults in one of them — the exact failure invariant I4 exists to prevent, arriving
- * through a new door.
- *
- * <p>Nothing here is about performance or convenience. It is about what the platform is
- * entitled to conclude from a topic name.
- */
 class ClusterScopedMappingTest {
-
     private static SourceMapping mapping(String name, String pattern, String cluster) {
         SourceMapping mapping = new SourceMapping();
         mapping.setName(name);
@@ -78,9 +63,6 @@ class ClusterScopedMappingTest {
     void originlessObservationsDoNotMatchScopedMappings() {
         SourceMappingRegistry registry = registryOf(mapping("eu-orders", "order-created", "retail-eu"));
 
-        // An HTTP post carries no cluster, and a single-cluster deployment says nothing
-        // about which one. Reading either as EU telemetry would be the platform deciding
-        // something the evidence does not say, which is what I8 forbids.
         assertThat(registry.forTopic(null, "order-created").getName()).isNotEqualTo("eu-orders");
         assertThat(registry.forTopic("order-created").getName()).isNotEqualTo("eu-orders");
     }
@@ -88,7 +70,6 @@ class ClusterScopedMappingTest {
     @Test
     @DisplayName("a mapping that named this cluster wins over one that named none")
     void theSpecificDeclarationWins() {
-        // Both orderings, because the point is that filename does not decide this one.
         SourceMappingRegistry unscopedFirst = registryOf(
                 mapping("any-orders", "order-.*", null),
                 mapping("eu-orders", "order-.*", "retail-eu"));
@@ -99,7 +80,6 @@ class ClusterScopedMappingTest {
         assertThat(unscopedFirst.forTopic("retail-eu", "order-created").getName()).isEqualTo("eu-orders");
         assertThat(scopedFirst.forTopic("retail-eu", "order-created").getName()).isEqualTo("eu-orders");
 
-        // And a cluster nobody wrote a specific mapping for still gets the general one.
         assertThat(unscopedFirst.forTopic("logistics-us", "order-created").getName()).isEqualTo("any-orders");
         assertThat(scopedFirst.forTopic("logistics-us", "order-created").getName()).isEqualTo("any-orders");
     }
@@ -120,8 +100,6 @@ class ClusterScopedMappingTest {
         SourceMappingRegistry packaged = new SourceMappingRegistry();
         packaged.load();
 
-        // The declarations that ship with this build name no cluster, so every one of them
-        // has to keep answering the question it answered before any of this existed.
         for (String topic : new String[]{"order-created", "payment-completed", "inventory-reserved"}) {
             assertThat(packaged.forTopic(null, topic).getName())
                     .isEqualTo(packaged.forTopic(topic).getName());
@@ -156,8 +134,7 @@ class ClusterScopedMappingTest {
                 null, null, Map.of());
 
         assertThat(fromEu.origin()).isEqualTo("retail-eu");
-        // The six-argument form is what every existing caller means: one transport, and
-        // nothing to say about which.
+
         assertThat(fromHttp.origin()).isNull();
     }
 }

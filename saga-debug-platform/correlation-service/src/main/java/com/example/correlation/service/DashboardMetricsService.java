@@ -31,7 +31,6 @@ import java.util.stream.Collectors;
 
 @Service
 public class DashboardMetricsService {
-
     private final SagaInstanceRepository sagaInstanceRepository;
     private final AnomalyRepository anomalyRepository;
     private final RcaResultRepository rcaResultRepository;
@@ -54,14 +53,11 @@ public class DashboardMetricsService {
         int windowHours = requestedWindowHours > 0 ? requestedWindowHours : 24;
         Instant since = Instant.now().minus(windowHours, ChronoUnit.HOURS);
 
-        // Standing findings only, as RCA reads them: a withdrawn one is a claim the platform
-        // has said later observations falsified, and counting it reports it as current (L25).
         List<Anomaly> anomalies = anomalyRepository.findByDetectedAtAfter(since).stream()
                 .filter(anomaly -> anomaly.getRetractedAt() == null)
                 .toList();
         List<RcaResult> rcaResults = rcaResultRepository.findByCreatedAtAfter(since);
 
-        // Historical conclusions under a disputed specification are not current diagnoses.
         Set<String> ids = new HashSet<>();
         anomalies.forEach(a -> ids.add(a.getSagaId()));
         rcaResults.forEach(r -> ids.add(r.getSagaId()));
@@ -155,17 +151,6 @@ public class DashboardMetricsService {
         return roots != null ? roots : List.of();
     }
 
-    /**
-     * The step each finding is counted against, when that is established.
-     *
-     * <p>Two sources, both declared: a {@code workflow:<STEP>.timeout} threshold names the
-     * step it measured, and otherwise the events a finding cites belong to steps through the
-     * saga's workflow. A finding whose cited events span several steps, or none, is not
-     * counted rather than guessed at. The previous parse took the token before the first dot
-     * of any {@code workflow:} source — the workflow's own name for INVALID_TRANSITION,
-     * MULTI_TERMINAL_CONFLICT and the compensation findings — and fell back to a regex for
-     * anything upper-case in the text, which found event names (ROADMAP L23).
-     */
     private List<MetricItem> topAffectedSteps(List<Anomaly> anomalies, List<SagaInstance> sagas) {
         Map<String, WorkflowSpec> workflowBySaga = new LinkedHashMap<>();
         for (SagaInstance saga : sagas) {

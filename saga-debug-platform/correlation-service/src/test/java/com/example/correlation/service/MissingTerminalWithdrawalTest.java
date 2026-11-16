@@ -8,15 +8,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * L28: MISSING_TERMINAL_EVENT is withdrawn when the run is observed to end.
- *
- * <p>The SC16 shape: a run goes silent long enough for SAGA_STUCK and MISSING_TERMINAL_EVENT,
- * then its last event arrives. The ending falsifies "no terminal event"; the silence did
- * happen, so SAGA_STUCK stays and R06 can say the run recovered after it.
- */
 class MissingTerminalWithdrawalTest {
-
     private static final Instant T0 = Instant.parse("2026-09-01T10:00:00Z");
     private static final ExecutionKey RUN = ExecutionKey.of("shop", "ORD-1");
 

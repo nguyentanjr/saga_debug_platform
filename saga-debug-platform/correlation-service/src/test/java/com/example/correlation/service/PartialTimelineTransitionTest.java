@@ -13,18 +13,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * EXT-I9: an invalid transition judged on a partial timeline does not outlive it.
- *
- * <p>Captured KMS both-failed run (fixture kms-both-rejected-4a6e4dad, replay 2026-10-11),
- * judged against the KMS specification as it stood then, under which a failed payment
- * handing over to the join is not a declared edge. PAYMENT_REJECTED and the verdict carry
- * the same instant. Delivered forward, they are never neighbours in a way that is judged;
- * delivered in reverse, a prefix made them neighbours, INVALID_TRANSITION was filed, and it
- * stood after the full run was in hand and the pair was no longer adjacent.
- */
 class PartialTimelineTransitionTest {
-
     private static final ExecutionKey RUN = ExecutionKey.of("retest-replay-9", "4a6e4dad");
 
     private static final List<String[]> CAPTURED = List.of(

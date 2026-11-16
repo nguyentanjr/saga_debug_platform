@@ -14,16 +14,9 @@ import java.util.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-/**
- * The real correlation, inline detectors, RCA rules and selector over in-memory
- * repositories, for paired ablation inputs (E2, E3). No Kafka, no database, no scheduled
- * sweeps unless a test calls a detector pass itself.
- */
 final class ReplayPipeline {
-
     static final com.fasterxml.jackson.databind.ObjectMapper MAPPER =
             new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
-
 
     final Map<String, SagaInstance> instances = new LinkedHashMap<>();
     final List<SagaEvent> events = new ArrayList<>();
@@ -41,7 +34,6 @@ final class ReplayPipeline {
         this(null);
     }
 
-    /** @param workflows the specifications to judge against; null loads the shipped ones */
     ReplayPipeline(WorkflowRegistry workflows) {
         sagas = mock(SagaInstanceRepository.class);
         eventRepo = mock(SagaEventRepository.class);
@@ -70,7 +62,7 @@ final class ReplayPipeline {
         });
         when(anomalyRepo.save(any())).thenAnswer(c -> {
             Anomaly a = c.getArgument(0);
-            // The ablated arm withholds every withdrawal, including those saved row by row.
+
             if (!retractionEnabled) { a.setRetractedAt(null); a.setRetractionReason(null); }
             if (a.getId() == null) { a.setId((long) anomalies.size() + 1); anomalies.add(a); }
             return a;
@@ -96,7 +88,7 @@ final class ReplayPipeline {
             return n;
         });
         when(rcaRepo.save(any())).thenAnswer(c -> c.getArgument(0));
-        // What a fold of two executions does to stored rows (ExecutionAliasResolver.merge).
+
         when(eventRepo.repointSaga(anyString(), anyString())).thenAnswer(c -> {
             int n = 0;
             for (SagaEvent e : events) {

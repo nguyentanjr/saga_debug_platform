@@ -11,16 +11,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * EXT-STUCK-TIMEOUT: silence is judged against the step the run is waiting on.
- *
- * <p>Live ewallet W2N run (2026-10-15, 5/5 transfers): after HOLD_SUCCEEDED the source
- * publishes COMMISSION_REQUESTED, which the workflow does not place. The detector took that
- * last event's step -- none -- and used the 60s default, so every transfer waiting its
- * declared 15m for release was reported SAGA_STUCK after a minute.
- */
 class AwaitedStepStuckTimeoutTest {
-
     private static final ExecutionKey RUN = ExecutionKey.of("ewallet", "TX-1");
 
     @Test

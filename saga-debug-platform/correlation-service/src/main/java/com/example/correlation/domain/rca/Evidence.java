@@ -11,7 +11,6 @@ public record Evidence(
         String expectedValue,
         Long anomalyId,
         List<String> eventIds) {
-
     public Evidence {
         eventIds = eventIds == null ? List.of() : List.copyOf(eventIds);
     }

@@ -18,19 +18,7 @@ import java.util.TreeSet;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * L19: every event name a shipped mapping produces is one its system's workflow knows.
- *
- * <p>Read from {@code declarations/}, the files the observer loads, for every mapping whose
- * workflow is established — named by the mapping ({@code workflow:}) or claiming the
- * mapping's system ({@code sources:}). An unknown name lands in no step, and the run is
- * judged without it, silently; before this only the hotel system (OutboxPatternIngestionTest)
- * was checked, so a rename on one side of kms or spm would surface only in a live run.
- * Mappings with no established workflow — probes, and the hotel system whose specification
- * does not declare its sources — are out of scope here.
- */
 class DeclaredVocabularyTest {
-
     private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
     @Test
@@ -63,11 +51,6 @@ class DeclaredVocabularyTest {
         assertThat(unknown).isEmpty();
     }
 
-    /**
-     * The workflow the mapping names, or every workflow claiming its system: one system may run
-     * several (ewallet-core-transfer: W2N and W2O share topics), and a name need only be known
-     * to one of them.
-     */
     private static List<WorkflowSpec> workflowsOf(Map<String, Object> source, WorkflowRegistry workflows) {
         Object declared = source.get("workflow");
         if (declared != null) return workflows.byType(declared.toString()).stream().toList();
@@ -79,7 +62,6 @@ class DeclaredVocabularyTest {
                 .toList();
     }
 
-    /** The repository's declarations directory, whether surefire runs from the module or the root. */
     private static Path declarations() {
         Path here = Path.of("").toAbsolutePath();
         Path root = Files.exists(here.resolve("declarations")) ? here : here.getParent();

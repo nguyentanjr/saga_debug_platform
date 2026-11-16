@@ -44,40 +44,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/**
- * Whether an observed pair of steps is a transition the workflow forbids, or a transition
- * the platform has not finished watching.
- *
- * <h2>The defect these were written against</h2>
- * {@code judgeTransition} asked whether the two steps were <em>adjacent</em> in the
- * declared graph, and answered INVALID whenever they were not. Adjacency is a property of
- * the specification; what was observed is a property of the evidence. Conflating them made
- * every gap in delivery into an accusation:
- *
- * <pre>
- *   observed:  ORDER_CREATED, INVENTORY_RESERVED
- *   declared:  CREATE_ORDER -> PROCESS_PAYMENT -> RESERVE_INVENTORY
- *   answered:  INVALID_TRANSITION
- * </pre>
- *
- * <p>The run had gone exactly where the graph says. The platform had not yet read
- * {@code PAYMENT_COMPLETED} — a partition it was behind on, a retry in flight. Measured
- * live on this code before the change: injecting those two events raised a standing
- * {@code INVALID_TRANSITION}, and because the finding is an occurrence claim it was never
- * withdrawn when the middle event arrived.
- *
- * <p>The distinction is not a nicety. A wrong transition says the observed system violated
- * its own workflow; a missing observation says the observer is behind. Only the first is a
- * finding, and only reachability tells them apart.
- *
- * <h2>A second false positive found on the way</h2>
- * A declared edge's condition names the outcome of the step it <em>leaves</em>. The caller
- * passed the outcome of the step it arrives at, so a loan assessment reporting APPROVED
- * was judged against the edge for SUCCESS — what disbursement reports — and every healthy
- * run of a workflow with named outcomes was condemned for the transition it correctly made.
- */
 class TransitionEvidenceTest {
-
     private static final Instant T0 = Instant.parse("2026-01-01T00:00:00Z");
     private static final String SOURCE = ExecutionKey.DEFAULT_SOURCE;
     private static final ExecutionKey RUN = ExecutionKey.of(SOURCE, "run-1");
@@ -148,8 +115,6 @@ class TransitionEvidenceTest {
         orderSaga = registry.byType("ORDER_SAGA").orElseThrow();
         loanApproval = registry.byType("LOAN_APPROVAL").orElseThrow();
 
-        // The real detector, not a mock: the question is whether an INVALID_TRANSITION row
-        // is written, and a mock can only report that the detector was consulted.
         AnomalyDetectionService anomalyDetectionService = new AnomalyDetectionService(
                 sagaInstanceRepository, sagaEventRepository, anomalyRepository,
                 registry, new ObjectMapper(), new DetectionProperties(),
@@ -160,12 +125,6 @@ class TransitionEvidenceTest {
                 new DeduplicationCache(), registry, new ObjectMapper());
     }
 
-    // ── 1. a missing intermediate observation ─────────────────────────────────
-
-    /**
-     * A and C observed, B not. The graph declares A → B → C, so what was seen is exactly
-     * what the graph allows; the only thing established is that B has not been read yet.
-     */
     @Test
     void aTargetReachableThroughAnUnobservedStepIsNotJudged() {
         TransitionJudgment judgment = orderSaga.explainTransition(
@@ -175,7 +134,6 @@ class TransitionEvidenceTest {
         assertThat(judgment.stepsInBetween()).containsExactly("PROCESS_PAYMENT");
     }
 
-    /** And no finding is filed for it. */
     @Test
     void aMissingIntermediateObservationRaisesNoInvalidTransition() {
         observe("e1", "ORDER_CREATED", 0);
@@ -184,7 +142,6 @@ class TransitionEvidenceTest {
         assertThat(raised()).doesNotContain(AnomalyType.INVALID_TRANSITION);
     }
 
-    /** Nor when several steps in a row are missing. */
     @Test
     void severalMissingStepsInARowAreStillJustMissing() {
         assertThat(loanApproval.explainTransition(
@@ -198,13 +155,6 @@ class TransitionEvidenceTest {
         assertThat(raised()).doesNotContain(AnomalyType.INVALID_TRANSITION);
     }
 
-    // ── 2. the intermediate observation turns up afterwards ───────────────────
-
-    /**
-     * A, then C, then B. Once B is in hand the reconstruction judges the pairs the run
-     * really made — A→B and B→C, both declared — and never retrospectively invents a
-     * finding out of the window in which C had no predecessor but A.
-     */
     @Test
     void anIntermediateEventArrivingLateCompletesTheRunWithoutAFinding() {
         observe("e1", "ORDER_CREATED", 0);
@@ -216,13 +166,6 @@ class TransitionEvidenceTest {
         assertThat(run().getEndTime()).isEqualTo(T0.plusSeconds(2));
     }
 
-    // ── 3. a transition the workflow really forbids ───────────────────────────
-
-    /**
-     * The assessment reported APPROVED, which the graph routes to disbursement, and no path
-     * from disbursement reaches human review. Nothing about delivery order or unobserved
-     * steps can explain that, so it is a claim about the observed system.
-     */
     @Test
     void anOutcomeRoutedSomewhereItCannotReachIsInvalid() {
         assertThat(loanApproval.judgeTransition("ASSESS_RISK", "HUMAN_REVIEW", "APPROVED"))
@@ -235,7 +178,6 @@ class TransitionEvidenceTest {
         assertThat(raised()).contains(AnomalyType.INVALID_TRANSITION);
     }
 
-    /** Going backwards is forbidden too: nothing downstream of a step reaches its start. */
     @Test
     void aRunMovingBackwardsThroughItsGraphIsInvalid() {
         assertThat(orderSaga.judgeTransition(
@@ -243,19 +185,12 @@ class TransitionEvidenceTest {
                 .isEqualTo(TransitionVerdict.INVALID);
     }
 
-    /**
-     * And an outcome the graph declares to end the run has no legitimate successor at all,
-     * so a step following it contradicts the specification rather than merely being far
-     * from it.
-     */
     @Test
     void aStepFollowingAnOutcomeThatEndsTheRunIsInvalid() {
         assertThat(orderSaga.judgeTransition(
                 "RESERVE_INVENTORY", "CREATE_ORDER", WorkflowSpec.SUCCESS_OUTCOME))
                 .isEqualTo(TransitionVerdict.INVALID);
     }
-
-    // ── 4. a declared, adjacent transition ────────────────────────────────────
 
     @Test
     void aDeclaredTransitionIsValid() {
@@ -275,11 +210,6 @@ class TransitionEvidenceTest {
         assertThat(run().getStatus()).isEqualTo(SagaStatus.COMPLETED);
     }
 
-    /**
-     * The second false positive: a workflow whose steps have named outcomes. The edge out of
-     * the assessment is declared on APPROVED — the assessment's own outcome — so that is the
-     * condition the run has to be judged against.
-     */
     @Test
     void aHealthyRunOfAWorkflowWithNamedOutcomesRaisesNoTransitionFinding() {
         observe("l1", "APPLICATION_SUBMITTED", 0);
@@ -290,7 +220,6 @@ class TransitionEvidenceTest {
         assertThat(run().getStatus()).isEqualTo(SagaStatus.COMPLETED);
     }
 
-    /** Including the branch that routes through a human. */
     @Test
     void theBranchingRunOfThatWorkflowRaisesNoTransitionFindingEither() {
         observe("l1", "APPLICATION_SUBMITTED", 0);
@@ -301,9 +230,6 @@ class TransitionEvidenceTest {
         assertThat(raised()).doesNotContain(AnomalyType.INVALID_TRANSITION);
     }
 
-    // ── 5. redelivery ─────────────────────────────────────────────────────────
-
-    /** A replayed event is folded in nowhere, so it cannot change a verdict either. */
     @Test
     void redeliveryDoesNotChangeTheVerdict() {
         observe("e1", "ORDER_CREATED", 0);
@@ -317,7 +243,6 @@ class TransitionEvidenceTest {
         assertThat(events).hasSize(2);
     }
 
-    /** And replaying a run that really is invalid does not multiply the finding. */
     @Test
     void redeliveryDoesNotDuplicateATrueFinding() {
         observe("l1", "APPLICATION_SUBMITTED", 0);
@@ -329,13 +254,6 @@ class TransitionEvidenceTest {
                 .isEqualTo(1);
     }
 
-    // ── 6. delivery order must not turn UNKNOWN into INVALID ──────────────────
-
-    /**
-     * Every delivery order of one healthy run. A verdict that changed with arrival order
-     * would be the observer's own read sequence deciding whether the observed system is at
-     * fault, which is the whole class of bug this file exists to remove.
-     */
     @Test
     void noDeliveryOrderOfAHealthyRunProducesAFinding() {
         List<String[]> happyPath = List.of(
@@ -352,7 +270,6 @@ class TransitionEvidenceTest {
         }
     }
 
-    /** The same for a run whose outcome really is invalid: it is found in every order. */
     @Test
     void aTrulyInvalidRunIsFoundInEveryDeliveryOrder() {
         List<String[]> invalidRun = List.of(
@@ -369,13 +286,6 @@ class TransitionEvidenceTest {
         }
     }
 
-    // ── 7. compensation ───────────────────────────────────────────────────────
-
-    /**
-     * A failure routes to the COMPENSATING marker, which is a phase rather than an ending:
-     * the work done in it is the compensation steps. Reading the marker as "nothing may
-     * follow" would make every ordinary compensation a forbidden transition.
-     */
     @Test
     void aFailureHandingOffToItsCompensationIsValid() {
         assertThat(orderSaga.judgeTransition(
@@ -386,7 +296,6 @@ class TransitionEvidenceTest {
                 .isEqualTo(TransitionVerdict.VALID);
     }
 
-    /** A compensation reachable only through steps that were not observed is not judged. */
     @Test
     void aCompensationReachedThroughUnobservedStepsIsNotJudged() {
         assertThat(orderSaga.judgeTransition(
@@ -394,7 +303,6 @@ class TransitionEvidenceTest {
                 .isEqualTo(TransitionVerdict.UNKNOWN);
     }
 
-    /** A whole compensating run, delivered backwards, raises no transition finding. */
     @Test
     void aCompensatingRunReadBackwardsRaisesNoTransitionFinding() {
         observe("c5", "PAYMENT_REFUNDED", 4);
@@ -407,13 +315,6 @@ class TransitionEvidenceTest {
         assertThat(run().getStatus()).isEqualTo(SagaStatus.COMPENSATED);
     }
 
-    // ── 8. terminal state semantics are untouched ─────────────────────────────
-
-    /**
-     * An event that really happened after the run ended is still reported as such. Making
-     * the transition check abstain more often must not soften a different finding that
-     * rests on different evidence.
-     */
     @Test
     void anEventAfterATerminalStateIsStillReported() {
         observeHappyPath();
@@ -422,7 +323,6 @@ class TransitionEvidenceTest {
         assertThat(raised()).contains(AnomalyType.FORBIDDEN_POST_TERMINAL);
     }
 
-    /** And one that merely arrived late still is not. */
     @Test
     void anEventThatOnlyArrivedLateIsStillNotReported() {
         observe("e1", "ORDER_CREATED", 0);
@@ -432,24 +332,6 @@ class TransitionEvidenceTest {
         assertThat(raised()).doesNotContain(AnomalyType.FORBIDDEN_POST_TERMINAL);
     }
 
-    // ── 9. F3: the post-terminal question is asked of the run, not of the arrival ──
-
-    /**
-     * The F3 counterexample. One run, three observations whose business order the clock
-     * settles outright — {@code PAYMENT_FAILED} at t20 provably follows the ending at t10 —
-     * and yet the finding used to depend on which of them was read last:
-     *
-     * <pre>
-     *   arrival [e1, e2, e3] -> FORBIDDEN_POST_TERMINAL raised
-     *   arrival [e1, e3, e2] -> silence
-     * </pre>
-     *
-     * <p>{@code EvidenceTimeline} was order-independent throughout; the question put to it
-     * was not. It was asked once, of the event in hand, so the terminal observation that
-     * arrives <em>after</em> the late one was never matched against what it had already
-     * ended. Same evidence, two verdicts — I9, and unlike {@code OUT_OF_ORDER} this finding
-     * has no claim on delivery order to exempt it.
-     */
     @Test
     void aPostTerminalEventIsFoundInEveryDeliveryOrder() {
         List<String[]> run = List.of(
@@ -466,14 +348,6 @@ class TransitionEvidenceTest {
         }
     }
 
-    /**
-     * SC13's shape: the run ended at INVENTORY_RESERVED, then PAYMENT_COMPLETED arrived again.
-     * That is one fact, an observation after the ending, and FORBIDDEN_POST_TERMINAL is its
-     * claim. It was also filed as INVALID_TRANSITION RESERVE_INVENTORY -> PROCESS_PAYMENT, and
-     * RCA ranked that second reading of the same event first (by step position), so the run
-     * was diagnosed as a routing fault instead of a write after the end. After an ending there
-     * is no handoff left in the graph to judge.
-     */
     @Test
     void anObservationAfterTheEndingIsNotAlsoJudgedAsAHandoff() {
         List<String[]> run = List.of(
@@ -492,12 +366,6 @@ class TransitionEvidenceTest {
         }
     }
 
-    /**
-     * And the other half of the same invariant: asking the question of the whole run must
-     * not make it easier to answer yes. A run where nothing happened after the ending stays
-     * silent in all six orders — including the three where the ending is read before the
-     * observations the clock puts ahead of it.
-     */
     @Test
     void noDeliveryOrderOfARunWithNoPostTerminalEventRaisesOne() {
         List<String[]> run = List.of(
@@ -514,13 +382,6 @@ class TransitionEvidenceTest {
         }
     }
 
-    /**
-     * What F3 buys, and what it does not, when more than one pair qualifies.
-     *
-     * <p>Five observations with three provably post-terminal pairs — (e3,e4), (e3,e5) and
-     * (e4,e5). The finding's <em>existence</em> is now a property of the evidence: it is
-     * raised in all 120 delivery orders. That is the invariant the fix was for.
-     */
     @Test
     void aPostTerminalFindingIsRaisedInEveryOrderWhenSeveralPairsQualify() {
         assertThat(postTerminalShapesOverEveryOrderOf(severalQualifyingPairs()))
@@ -528,7 +389,6 @@ class TransitionEvidenceTest {
                 .doesNotContainKey(NO_FINDING);
     }
 
-    /** F9: the cited pair and its business time must also be independent of delivery. */
     @Test
     void everyDeliveryOrderCitesTheSamePostTerminalPair() {
         assertThat(postTerminalShapesOverEveryOrderOf(severalQualifyingPairs()))
@@ -543,7 +403,7 @@ class TransitionEvidenceTest {
         Anomaly finding = postTerminalFinding();
         Long id = finding.getId();
         assertThat(finding.getEvidenceEventIds()).containsExactly("e4", "e5");
-        finding.setDetectedAt(T0); // Earlier analysis/detection, without a wall-clock sleep.
+        finding.setDetectedAt(T0);
 
         observe("e3", "INVENTORY_RESERVED", 2);
 
@@ -585,8 +445,8 @@ class TransitionEvidenceTest {
         Instant detected = finding.getDetectedAt();
         clearInvocations(anomalyRepository);
 
-        observe("e2", "PAYMENT_COMPLETED", 1); // More evidence, same canonical pair.
-        observe("e4", "PAYMENT_FAILED", 3); // Duplicate observation.
+        observe("e2", "PAYMENT_COMPLETED", 1);
+        observe("e4", "PAYMENT_FAILED", 3);
 
         assertThat(postTerminalFinding()).isSameAs(finding);
         assertThat(finding.getDetectedAt()).isEqualTo(detected);
@@ -608,12 +468,6 @@ class TransitionEvidenceTest {
                 .containsOnlyKeys(NO_FINDING);
     }
 
-    /**
-     * Holds the competing evidence fixed to isolate F9 from other detectors' citations.
-     * Both R03 and R04 are STRONG; an old (e4,e5) citation incorrectly anchors R04 at
-     * payment, before the competing inventory finding. The canonical pair anchors it at
-     * inventory, where R03's higher severity wins.
-     */
     @Test
     void thePostTerminalCitationGivesTheSameRcaAnchorRankingAndPrimaryInEveryOrder() {
         RuleRegistry rules = new RuleRegistry();
@@ -699,9 +553,6 @@ class TransitionEvidenceTest {
                 new String[]{"e5", "INVENTORY_FAILED", "4"});
     }
 
-    // ── F11: the other occurrence findings, and which finding a rule cites ────
-
-    /** F11: STATE_REGRESSION's cited pair no longer depends on how much of the run had arrived. */
     @Test
     void everyDeliveryOrderCitesTheSameStateRegressionPair() {
         assertThat(shapesOverEveryOrderOf(severalQualifyingPairs(), AnomalyType.STATE_REGRESSION))
@@ -709,20 +560,12 @@ class TransitionEvidenceTest {
                 .doesNotContainKey(NO_FINDING);
     }
 
-    /** F11: nor does the set of terminal observations MULTI_TERMINAL_CONFLICT cites. */
     @Test
     void everyDeliveryOrderCitesTheSameConflictingTerminals() {
-        // INVENTORY_FAILED routes to compensation rather than ending the run, so it is not
-        // one of the conflicting terminals.
         assertThat(shapesOverEveryOrderOf(severalQualifyingPairs(), AnomalyType.MULTI_TERMINAL_CONFLICT))
                 .containsOnlyKeys("[e3, e4] @" + T0.plusSeconds(3));
     }
 
-    /**
-     * F11: R04 matches both FORBIDDEN_POST_TERMINAL and STATE_REGRESSION, and cited whichever
-     * the repository happened to return first — findStandingBySagaId has no ORDER BY. The
-     * same findings, returned in every order, must produce the same diagnosis.
-     */
     @Test
     void theOrderFindingsAreReadBackInDoesNotChangeTheDiagnosis() {
         severalQualifyingPairs().forEach(e -> observe(e[0], e[1], Long.parseLong(e[2])));
@@ -744,12 +587,6 @@ class TransitionEvidenceTest {
         assertThat(diagnoses).hasSize(1);
     }
 
-    /**
-     * F14: every arrival re-judges every adjacent pair, and the same invalid handoff used
-     * to be filed again each time — two identical findings for RESERVE_INVENTORY →
-     * PROCESS_PAYMENT in the run above, counted twice on the dashboard and quoted twice in
-     * the diagnosis. One standing finding per handoff, in every delivery order.
-     */
     @Test
     void anInvalidHandoffIsFiledOnceHoweverOftenItIsReJudged() {
         for (List<String[]> order : permutations(severalQualifyingPairs())) {
@@ -764,12 +601,10 @@ class TransitionEvidenceTest {
         }
     }
 
-    /** Every delivery order of {@code run}, against what its post-terminal finding cites. */
     private Map<String, List<String>> postTerminalShapesOverEveryOrderOf(List<String[]> run) {
         return shapesOverEveryOrderOf(run, AnomalyType.FORBIDDEN_POST_TERMINAL);
     }
 
-    /** Every delivery order of {@code run}, against what its standing finding of {@code type} cites. */
     private Map<String, List<String>> shapesOverEveryOrderOf(List<String[]> run, AnomalyType type) {
         Map<String, List<String>> shapes = new LinkedHashMap<>();
         for (List<String[]> order : permutations(run)) {
@@ -786,9 +621,6 @@ class TransitionEvidenceTest {
         return shapes;
     }
 
-    // ── the specification saying nothing is still its own answer ──────────────
-
-    /** A step the graph does not mention cannot be judged against it. */
     @Test
     void aStepTheGraphDoesNotMentionIsNotJudged() {
         assertThat(orderSaga.judgeTransition(
@@ -796,15 +628,12 @@ class TransitionEvidenceTest {
                 .isEqualTo(TransitionVerdict.UNKNOWN);
     }
 
-    /** Nor are two observations of one step's own lifecycle a transition at all. */
     @Test
     void aStepHandingOffToItselfIsNotATransition() {
         assertThat(orderSaga.judgeTransition(
                 "RESERVE_INVENTORY", "RESERVE_INVENTORY", WorkflowSpec.SUCCESS_OUTCOME))
                 .isEqualTo(TransitionVerdict.UNKNOWN);
     }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private SagaInstance run() {
         return instances.get(RUN.canonical());

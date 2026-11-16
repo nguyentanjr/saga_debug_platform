@@ -22,21 +22,9 @@ import java.util.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-/**
- * Staging replay: one group of runs through the real alias
- * resolver, in every delivery order that keeps each partition's offset order.
- *
- * <p>-DaliasEvents=file.json: [{ref, ts, payload}], ref = topic-partition-offset.
- * -DnoLink=true drops the alias of the record whose ref ends in -DnoLinkRef (control arm).
- * Mirrors EventIngestionService lines 168-190; no dedup, no transaction. Received time is
- * the harness's wall clock, so SAGA_STUCK is not raised here; MISSING_TERMINAL_EVENT is
- * not either, ReplayPipeline does not answer findByStatusInAndLastUpdatedBefore.
- */
 class AliasOrderTest {
-
     record Ev(String ref, String topic, String partition, Instant ts, String payload) {}
 
-    /** Staging 2026-11-02: hold A6305591851880725 and the release M6305592191590003 that names it. */
     private static final String EVENTS = "/ewallet-staging/events-alias-T67.json";
     private static final String LINK = "staging-ewallet-transfer-management-v2-2-1183311";
 
@@ -47,7 +35,6 @@ class AliasOrderTest {
         assertThat(outcomes.keySet()).containsExactly("A6305591851880725[EWALLET_W2N_TRANSFER COMPLETED 7ev []]");
     }
 
-    /** Without the event that carries both ids the two stay apart, as the old build read them. */
     @Test
     void withoutTheLinkingEventTheyStayApartInEveryOrder() throws Exception {
         assertThat(outcomes(LINK).keySet()).singleElement().asString()

@@ -22,30 +22,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-/**
- * E2 (ROADMAP): ablation of the correctness mechanisms that the recorded evaluation set
- * never exercises -- it is one source, delivered in order, so none of them ever fires.
- *
- * <p>Each experiment is a paired input through the real correlation, inline detectors,
- * RCA rules and selector (in-memory repositories, as in {@link Sc06ReplayTest}). The
- * mechanism is removed at the INPUT or at the repository boundary, never by a switch in
- * production code:
- * <ul>
- *   <li>identity namespace: two sources' runs are relabelled as one source, which is what
- *       keying executions by raw id alone amounts to;</li>
- *   <li>arrival-order independence: every delivery order of recorded real runs, with the
- *       subject guard of {@code RcaSelector.promote} ablated on the same outputs;</li>
- *   <li>withdrawal: {@code retractClaims} made a no-op, which is the platform before
- *       absence claims could be withdrawn.</li>
- * </ul>
- * Printed rows are the ablation table; assertions pin the control behaviour and the
- * observed difference, so a later change that erases the difference is visible.
- */
 class CorrectnessAblationTest {
-
     private static final ObjectMapper MAPPER = new ObjectMapper().findAndRegisterModules();
-
-    // ══ A. identity namespace ═════════════════════════════════════════════════
 
     @Test
     void namespaceKeepsTwoSourcesRunsApart() {
@@ -53,7 +31,6 @@ class CorrectnessAblationTest {
         control.deliver(healthyRun("shop-a", "ORD-1", "a", 0));
         control.deliver(healthyRun("shop-b", "ORD-1", "b", 1));
 
-        // Ablated: the same observations with the source dimension erased.
         ReplayPipeline ablated = new ReplayPipeline();
         ablated.deliver(healthyRun("shop", "ORD-1", "a", 0));
         ablated.deliver(healthyRun("shop", "ORD-1", "b", 1));
@@ -92,8 +69,6 @@ class CorrectnessAblationTest {
         return run;
     }
 
-    // ══ B. arrival-order independence ═════════════════════════════════════════
-
     @Test
     void conclusionDoesNotDependOnDeliveryOrder() throws Exception {
         int totalOrders = 0, divergent = 0, statusDivergent = 0, r14Raised = 0, guardAblatedWrong = 0;
@@ -112,14 +87,12 @@ class CorrectnessAblationTest {
                 Instant base = Instant.parse(recorded.get(0).path("receivedAt").asText());
                 String id = null;
                 for (int i = 0; i < order.size(); i++) {
-                    // Delivery order is the permutation; each record keeps its own source stamp.
                     IngestedEvent e = fromRecorded(order.get(i), base.plusSeconds(i));
                     id = e.identity().executionKey().canonical();
                     p.deliver(List.of(e));
                 }
                 ReplayPipeline.Outcome o = p.outcome(id);
-                // The diagnosis: execution outcome and the published cause. rcaStatus is tracked
-                // apart so a regression of F19 is reported on its own line.
+
                 String conclusion = o.sagaStatus + " / " + o.primary;
                 statuses.add(o.rcaStatus);
                 conclusions.add(conclusion);
@@ -129,7 +102,7 @@ class CorrectnessAblationTest {
                         && "STRONG_EVIDENCE".equals(String.valueOf(c.getStatus())));
                 if (r14) {
                     withR14++;
-                    // Subject guard ablated on the same output: first STRONG candidate, R14 included.
+
                     String unguarded = o.candidates.stream()
                             .filter(c -> "STRONG_EVIDENCE".equals(String.valueOf(c.getStatus())))
                             .map(c -> c.getRootCause()).findFirst().orElse(null);
@@ -171,8 +144,6 @@ class CorrectnessAblationTest {
                 nullable(e, "transportRef"));
     }
 
-    // ══ C. withdrawal of absence claims ═══════════════════════════════════════
-
     @Test
     void aFalsifiedAbsenceClaimStopsInformingTheDiagnosis() {
         ReplayPipeline.Outcome control = withdrawalScenario(true);
@@ -189,12 +160,6 @@ class CorrectnessAblationTest {
                 .isNotEqualTo(control.primary + "|" + control.rcaStatus + "|" + control.candidateRules);
     }
 
-    /**
-     * An execution first seen through an event no workflow declares (backlog read out of
-     * order), silent long enough to be called stuck, then its ORDER_CREATED and the rest
-     * arrive and resolve the workflow -- which withdraws what was claimed about the
-     * unresolved run.
-     */
     private ReplayPipeline.Outcome withdrawalScenario(boolean retraction) {
         ReplayPipeline p = new ReplayPipeline();
         p.retractionEnabled = retraction;
@@ -213,8 +178,6 @@ class CorrectnessAblationTest {
                         start.plusSeconds(2), later.plusMillis(2), "{}", null)));
         return p.outcome(key.canonical());
     }
-
-    // ══ harness ═══════════════════════════════════════════════════════════════
 
     static void report(String experiment, String arm, ReplayPipeline.Outcome o) {
         System.out.printf("[E2 %s] %-24s %s%n", experiment, arm, o);

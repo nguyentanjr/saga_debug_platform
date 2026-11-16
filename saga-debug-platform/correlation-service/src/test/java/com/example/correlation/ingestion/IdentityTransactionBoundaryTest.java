@@ -24,29 +24,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-/**
- * Identity and the observation that establishes it commit together, or not at all.
- *
- * <h2>The limitation these were written against</h2>
- * Alias resolution ran in {@code REQUIRES_NEW} — a transaction of its own, opened before
- * the one that stores the observation. The justification was that an alias is a standing
- * fact about two identifiers whether or not this particular event is stored.
- *
- * <p>That justification does not survive contact with what an alias row actually contains.
- * It cites the event that carried both identifiers, in {@code linkedByEventId}. A row
- * saying "these two are one run, see event e3" while e3 was never stored is not a fact, it
- * is a dangling citation — and worse, a fold performed on that basis moves observations,
- * re-points findings and withdraws absence claims, all on evidence the database does not
- * hold. A transient failure storing e3 left exactly that state behind.
- *
- * <h2>What atomicity does and does not buy</h2>
- * It makes the observer's own data consistent. It does not promote an inference to a fact:
- * the alias still records its source, its evidence event and the
- * {@link com.example.correlation.domain.CorrelationBasis} it was arrived at on, and a link
- * is still only ever made from an event that carried both identifiers.
- */
 class IdentityTransactionBoundaryTest {
-
     private static final String MAPPING = """
             name: split-ids
             topicPattern: 'split\\.events'
@@ -91,14 +69,6 @@ class IdentityTransactionBoundaryTest {
                 transactions);
     }
 
-    // ── the boundary ──────────────────────────────────────────────────────────
-
-    /**
-     * Identity is decided inside the same unit of work that stores the observation, and
-     * before it — an event's {@code saga_id} is its identity, so there is nothing to write
-     * until the key is known. The order is a consequence of the data model, not of the
-     * transaction.
-     */
     @Test
     void identityIsDecidedInsideTheUnitOfWorkThatStoresTheObservation() {
         ingest("""
@@ -111,10 +81,6 @@ class IdentityTransactionBoundaryTest {
         assertThat(transactions.hasRolledBack()).isFalse();
     }
 
-    /**
-     * A transient failure storing the observation rolls the identity decision back with it.
-     * Before, the alias had already committed in its own transaction and survived.
-     */
     @Test
     void aFailureStoringTheObservationRollsTheIdentityDecisionBack() {
         doThrow(new DataAccessResourceFailureException("database down"))
@@ -128,13 +94,6 @@ class IdentityTransactionBoundaryTest {
         assertThat(transactions.hasCommitted()).isFalse();
     }
 
-    // ── idempotency across the boundary ───────────────────────────────────────
-
-    /**
-     * The failure must not be remembered as success. Marking the event as seen before the
-     * commit would make the transport's redelivery — the whole recovery mechanism — look
-     * like a duplicate and drop it.
-     */
     @Test
     void anEventIsNotRememberedAsSeenUntilItsTransactionCommits() {
         doThrow(new DataAccessResourceFailureException("database down"))
@@ -145,7 +104,6 @@ class IdentityTransactionBoundaryTest {
         assertThatThrownBy(() -> ingest(event))
                 .isInstanceOf(DataAccessResourceFailureException.class);
 
-        // The redelivery the transport is about to make.
         org.mockito.Mockito.reset(correlationService);
         IngestionResult retry = ingestion.ingest(observation(event));
 
@@ -153,7 +111,6 @@ class IdentityTransactionBoundaryTest {
         verify(correlationService).processEvent(any(IngestedEvent.class));
     }
 
-    /** A redelivery after a successful commit is recognised rather than stored twice. */
     @Test
     void aRedeliveryAfterACommitIsRecognised() {
         String event = """
@@ -166,10 +123,6 @@ class IdentityTransactionBoundaryTest {
         verify(correlationService, times(1)).processEvent(any(IngestedEvent.class));
     }
 
-    /**
-     * A rejection is not a failure: an observation that cannot be identified never reaches
-     * the transaction at all, so no unit of work is opened for it.
-     */
     @Test
     void anUnidentifiableObservationOpensNoTransaction() {
         IngestionResult result = ingestion.ingest(observation("""
@@ -180,8 +133,6 @@ class IdentityTransactionBoundaryTest {
         assertThat(transactions.hasRolledBack()).isFalse();
         verify(correlationService, never()).processEvent(any(IngestedEvent.class));
     }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private IngestionResult ingest(String body) {
         return ingestion.ingest(observation(body));

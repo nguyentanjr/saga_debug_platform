@@ -26,13 +26,7 @@ import static org.mockito.Mockito.when;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/**
- * L14 follow-up: a record the listener gave up on is logged in full so it can be replayed,
- * and that log used to carry the fields a source declared the observer must not keep — the
- * hotel commands' card numbers among them.
- */
 class KafkaErrorHandlingConfigTest {
-
     @Test
     void aGivenUpRecordIsLoggedWithItsDeclaredFieldsRedacted() {
         SourceMapping mapping = new SourceMapping();
@@ -55,8 +49,6 @@ class KafkaErrorHandlingConfigTest {
                 .isEqualTo("{\"creditCardNo\":\"x\"}");
     }
 
-    // ---- L1: an outage of the observer's own store must not turn into lost events ----
-
     @Test
     void storeOutagesAreToldApartFromFaultsInTheRecord() {
         assertThat(KafkaErrorHandlingConfig.storeUnavailable(new ListenerExecutionFailedException("wrapped",
@@ -76,7 +68,7 @@ class KafkaErrorHandlingConfigTest {
         BackOffExecution outage = KafkaErrorHandlingConfig.backOffFor(new ListenerExecutionFailedException(
                 "listener failed", new CannotCreateTransactionException("Connection refused"))).start();
         long waited = 0;
-        for (int i = 0; i < 10_000; i++) {           // ~55 hours of simulated outage
+        for (int i = 0; i < 10_000; i++) {
             long next = outage.nextBackOff();
             assertThat(next).isNotEqualTo(BackOffExecution.STOP);
             waited += next;
@@ -101,7 +93,6 @@ class KafkaErrorHandlingConfigTest {
         MessageListenerContainer container = mock(MessageListenerContainer.class);
         when(container.isRunning()).thenReturn(true);
 
-        // The container hears "seek to current" as a throw; a give-up returns normally.
         for (int i = 0; i < 3; i++) {
             assertThatThrownBy(() -> handler.handleRemaining(new ListenerExecutionFailedException(
                             "listener failed", new CannotCreateTransactionException("Connection refused")),
@@ -110,7 +101,6 @@ class KafkaErrorHandlingConfigTest {
         }
         verify(consumer, times(3)).seek(eq(new TopicPartition("order-created", 0)), eq(42L));
 
-        // A fault in the record itself is still let go, so it cannot stall the partition.
         handler.handleRemaining(new ListenerExecutionFailedException("listener failed",
                         new IllegalArgumentException("bad record")),
                 List.of(new ConsumerRecord<>("order-created", 0, 43L, "SAGA-2", "{}")), consumer, container);

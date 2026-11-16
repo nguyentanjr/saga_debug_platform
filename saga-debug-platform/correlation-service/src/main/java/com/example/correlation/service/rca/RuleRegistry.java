@@ -17,30 +17,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * The declared anomaly-signature rules.
- *
- * <p>Loaded from {@code classpath*:rules/*.yaml}, so adding a diagnosis for a new domain
- * is adding a file — the same shape as adding a workflow or a source mapping. Completes
- * the set: the three things this platform has to be told about an unfamiliar system —
- * how to read its events, what its workflow is, and what a given symptom means — are now
- * all declared rather than compiled in.
- *
- * <p>An empty or absent rules directory is not an error: the procedural rules in
- * {@code RcaService} still run, so the engine degrades to nine rules instead of failing
- * to start. It is logged at warn, because a deployment that meant to declare rules and
- * silently declared none would otherwise look healthy.
- */
 @Component
 public class RuleRegistry {
-
     private static final Logger log = LoggerFactory.getLogger(RuleRegistry.class);
 
-    /**
-     * Where a deployment keeps rules it did not build into the jar. A threshold is a fact
-     * about the system being watched, so tuning one for a particular deployment must not
-     * mean rebuilding the platform.
-     */
     @Value("${correlation.declarations.dir:}")
     private String declarationsDirectory;
 
@@ -83,13 +63,6 @@ public class RuleRegistry {
         }
     }
 
-    /**
-     * Registers the well-formed rules from one file and reports the rest.
-     *
-     * <p>A malformed rule is dropped individually rather than failing the file: one bad
-     * entry should not cost the operator the other eight, and the log names what was
-     * dropped so the loss is visible rather than silent.
-     */
     private void register(List<AnomalySignatureRule> parsed, String filename) {
         if (parsed == null) return;
         Set<String> known = ruleIds();
@@ -114,7 +87,6 @@ public class RuleRegistry {
         }
     }
 
-    /** The declared rules, in load order. Ranking is the selector's job, not this one's. */
     public List<AnomalySignatureRule> rules() {
         return List.copyOf(rules);
     }

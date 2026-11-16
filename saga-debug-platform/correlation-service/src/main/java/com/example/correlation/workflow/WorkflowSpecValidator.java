@@ -8,31 +8,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * Checks that a workflow specification says something an engine can act on.
- *
- * <p>Every detector and every rule reads its expectations from the specification, so a
- * malformed one does not produce worse diagnoses — it produces confident nonsense. A step
- * unreachable from {@code STARTED} is never entered, so its timeout never fires and its
- * absence is never noticed. A step with no outgoing transition leaves every execution
- * that reaches it apparently unfinished forever. An event type declared for a step no
- * transition mentions classifies fine and then routes nowhere.
- *
- * <p>None of those surfaces as an error at runtime. They surface as a saga that sits in
- * IN_PROGRESS and a diagnosis that quietly makes no sense, which is the hardest kind of
- * defect to trace back to its cause. Checking at load time turns each of them into one
- * log line naming the file.
- *
- * <h2>Errors against warnings</h2>
- * An <b>error</b> means the specification cannot be interpreted as written: something is
- * named that does not exist, or a step can never be reached. A <b>warning</b> means it is
- * interpretable but incomplete — the engine will run and simply know less. The registry
- * refuses a spec with errors and loads one with warnings, because refusing on a warning
- * would make a partial specification useless when a partial answer is still worth having.
- */
 public final class WorkflowSpecValidator {
-
-    /** Pseudo-steps that name an outcome rather than a unit of work. */
     private static final Set<String> TERMINAL_MARKERS =
             Set.of("COMPLETED", "FAILED", "COMPENSATING", "COMPENSATED");
 
@@ -40,9 +16,7 @@ public final class WorkflowSpecValidator {
 
     private WorkflowSpecValidator() {}
 
-    /** What the checks found. Empty errors means the spec is usable. */
     public record Report(String workflowName, List<String> errors, List<String> warnings) {
-
         public boolean isUsable() { return errors.isEmpty(); }
 
         public boolean isClean() { return errors.isEmpty() && warnings.isEmpty(); }
@@ -100,9 +74,6 @@ public final class WorkflowSpecValidator {
         return new Report(name, errors, warnings);
     }
 
-    // ── individual checks ─────────────────────────────────────────────────────
-
-    /** Every {@code from} and {@code to} names a declared step or a known marker. */
     private static void checkTransitionEndpoints(List<WorkflowSpec.TransitionSpec> transitions,
             Set<String> stepIds, List<String> errors) {
         for (WorkflowSpec.TransitionSpec t : transitions) {
@@ -134,15 +105,8 @@ public final class WorkflowSpecValidator {
         }
     }
 
-    /**
-     * Every forward step is reachable from {@code STARTED}.
-     *
-     * <p>Compensation steps are exempt: they are entered from a failure branch and need
-     * not lie on the forward path.
-     */
     private static void checkReachability(List<WorkflowSpec.TransitionSpec> transitions,
             Set<String> stepIds, List<WorkflowSpec.StepSpec> forwardSteps, List<String> errors) {
-
         Set<String> reached = new LinkedHashSet<>();
         Deque<String> frontier = new ArrayDeque<>();
         frontier.add(START_MARKER);
@@ -165,7 +129,6 @@ public final class WorkflowSpecValidator {
         }
     }
 
-    /** A forward step with no way out leaves every execution reaching it unfinished. */
     private static void checkOutgoing(List<WorkflowSpec.TransitionSpec> transitions,
             List<WorkflowSpec.StepSpec> forwardSteps, List<String> warnings) {
         for (WorkflowSpec.StepSpec step : forwardSteps) {
@@ -191,7 +154,6 @@ public final class WorkflowSpecValidator {
         }
     }
 
-    /** A step naming a compensation must name one that exists. */
     private static void checkCompensationTargets(List<WorkflowSpec.StepSpec> forwardSteps,
             Set<String> stepIds, List<String> errors) {
         for (WorkflowSpec.StepSpec step : forwardSteps) {
@@ -203,16 +165,9 @@ public final class WorkflowSpecValidator {
         }
     }
 
-    /**
-     * {@code validEventTypes} agrees with what the steps declare.
-     *
-     * <p>The two say the same thing in two places, so they can disagree. A mismatch means
-     * an event classifies one way and routes another.
-     */
     private static void checkEventDeclarations(WorkflowSpec spec,
             List<WorkflowSpec.StepSpec> allSteps, Set<String> stepIds,
             List<String> errors, List<String> warnings) {
-
         Set<String> declaredBySteps = spec.declaredEventTypes();
 
         boolean anyStepDeclaresEvents = allSteps.stream()
@@ -235,8 +190,7 @@ public final class WorkflowSpecValidator {
                 warnings.add("validEventTypes lists '" + eventType + "' but no step declares "
                         + "it, so classifyEvent() will not recognise it");
             }
-            // Both are read (L21) and the map wins where it speaks, so a disagreement would
-            // silently decide every detector that asks which step an event belongs to (L24).
+
             spec.classifyEvent(eventType)
                     .map(WorkflowSpec.EventRole::stepId)
                     .filter(declaredStep -> stepId != null && !declaredStep.equals(stepId))
@@ -246,10 +200,8 @@ public final class WorkflowSpecValidator {
         });
     }
 
-    /** Every named outcome should have a transition to route it. */
     private static void checkOutcomeRouting(List<WorkflowSpec.StepSpec> allSteps,
             List<WorkflowSpec.TransitionSpec> transitions, List<String> warnings) {
-
         for (WorkflowSpec.StepSpec step : allSteps) {
             if (step.getId() == null || step.getOutcomes() == null) continue;
 

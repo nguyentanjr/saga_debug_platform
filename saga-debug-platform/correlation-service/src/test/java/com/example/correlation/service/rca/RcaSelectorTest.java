@@ -17,7 +17,6 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class RcaSelectorTest {
-
     private final RcaSelector selector = new RcaSelector();
 
     @Test
@@ -107,11 +106,6 @@ class RcaSelectorTest {
         assertThat(find(result, "R07").getStatus()).isEqualTo(CandidateStatus.STRONG_EVIDENCE);
     }
 
-    /**
-     * EXT-FALLBACK: SPM unknown-product retest. Reverse and last-first delivery added R14,
-     * about this platform's read order, and R20/R21 went from WEAK to RULED_OUT; forward
-     * and even-then-odd kept them. Only evidence about the observed system rules them out.
-     */
     @Test
     void evidenceAboutTheObservationProcessDoesNotRuleOutFallbacks() {
         CandidateAssessment r20 = candidate("R20", "OBSERVABILITY_GAP",
@@ -170,9 +164,6 @@ class RcaSelectorTest {
         assertThat(result.getRcaStatus()).isEqualTo(RcaStatus.NO_DIAGNOSIS_NEEDED);
     }
 
-    // ── F19: status asks the same question as promotion ──────────────────────
-
-    /** A completed run read out of order: the only finding is about the observer's reading. */
     @Test
     void observationProcessOnly_onCompletedRun_needsNoDiagnosis() {
         CandidateAssessment r14 = candidateBuilder("R14", "OUT_OF_ORDER_DELIVERY",
@@ -187,7 +178,6 @@ class RcaSelectorTest {
         assertThat(find(result, "R14").getStatus()).isEqualTo(CandidateStatus.STRONG_EVIDENCE);
     }
 
-    /** Same, while the run is still in flight: nothing about the observed system, no cause. */
     @Test
     void observationProcessOnly_onRunningRun_isInsufficient() {
         CandidateAssessment r14 = candidateBuilder("R14", "OUT_OF_ORDER_DELIVERY",
@@ -200,7 +190,6 @@ class RcaSelectorTest {
         assertThat(result.getRcaStatus()).isEqualTo(RcaStatus.INSUFFICIENT_EVIDENCE);
     }
 
-    /** An anomaly the observation-process candidate does not explain still calls for a diagnosis. */
     @Test
     void anomalyNotCitedByObservationCandidate_stillCounts() {
         CandidateAssessment r14 = candidateBuilder("R14", "OUT_OF_ORDER_DELIVERY",
@@ -214,7 +203,6 @@ class RcaSelectorTest {
         assertThat(result.getRcaStatus()).isEqualTo(RcaStatus.INSUFFICIENT_EVIDENCE);
     }
 
-    /** An anomaly an observed-system candidate also cites is not set aside. */
     @Test
     void anomalyAlsoCitedByObservedSystemCandidate_isNotSetAside() {
         CandidateAssessment r14 = candidateBuilder("R14", "OUT_OF_ORDER_DELIVERY",

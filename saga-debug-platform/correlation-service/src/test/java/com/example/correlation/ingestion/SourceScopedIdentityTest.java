@@ -22,29 +22,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
-/**
- * Two observed systems in one deployment, and the identifiers they happen to share.
- *
- * <h2>What went wrong before</h2>
- * Executions were keyed by the raw identifier a source published. Two systems are two id
- * spaces, so {@code ORD-A} in one and {@code ORD-A} in another were filed as one run. The
- * failure was not a crash or a rejected event — it was a fabricated execution whose events
- * interleaved two companies' systems, after which the detectors correctly reported a
- * terminal saga resuming, a state regression, an invalid transition and a step that took
- * twelve hours. Four high-severity findings, every one of them manufactured by the
- * observer and attributed to the observed.
- *
- * <p>The same held for event ids, more quietly: a globally unique {@code event_id} meant
- * the second system to publish an event called {@code 1} had it silently skipped as a
- * duplicate of the first system's.
- *
- * <p>These tests hold the boundary at the place it is decided, before anything is stored.
- */
 class SourceScopedIdentityTest {
-
     private static final Instant TRANSPORT_TIME = Instant.parse("2026-01-01T12:00:00Z");
 
-    /** Two unrelated systems that both number orders {@code ORD-A} and events {@code 1}. */
     private static final String SHOP = """
             name: shop
             topicPattern: 'shop\\.events'
@@ -82,8 +62,6 @@ class SourceScopedIdentityTest {
                 new com.example.correlation.ingestion.InlineTransactionManager());
     }
 
-    // ── the same identifier in two systems ────────────────────────────────────
-
     @Test
     void twoSourcesUsingTheSameExecutionIdAreTwoExecutions() {
         ingest("shop.events", """
@@ -98,10 +76,6 @@ class SourceScopedIdentityTest {
         assertThat(ingested.get(0).sagaId()).isNotEqualTo(ingested.get(1).sagaId());
     }
 
-    /**
-     * Both halves of the identity are kept: the raw id is what the system published and
-     * what an operator recognises, and it is never rewritten to make it unique.
-     */
     @Test
     void theRawIdentifierIsPreservedAlongsideTheNamespace() {
         ingest("shop.events", """
@@ -113,11 +87,6 @@ class SourceScopedIdentityTest {
         assertThat(ingested.sourceName()).isEqualTo("shop");
     }
 
-    /**
-     * An event id is unique only within the system that issued it. Deduplicating on the
-     * bare value discarded the second system's events as redeliveries of the first's — an
-     * accepted-looking outcome that lost data.
-     */
     @Test
     void twoSourcesUsingTheSameEventIdAreTwoObservations() {
         ingest("shop.events", """
@@ -128,12 +97,6 @@ class SourceScopedIdentityTest {
         assertThat(allIngested()).hasSize(2);
     }
 
-    /**
-     * A system whose run has already finished must not be disturbed by another system's
-     * event that happens to carry the same string. The two never meet: they are different
-     * executions before anything is loaded, so no status is recomputed and no detector
-     * sees a terminal saga resuming.
-     */
     @Test
     void anEventFromAnotherSourceNeverReachesAnAlreadyTerminalExecution() {
         ingest("shop.events", """
@@ -146,9 +109,6 @@ class SourceScopedIdentityTest {
         assertThat(ingested.get(1).sagaId()).isEqualTo("partner::ORD-DONE");
     }
 
-    // ── replay and ordering ───────────────────────────────────────────────────
-
-    /** A redelivery of the same observation from the same source is still one observation. */
     @Test
     void aReplayFromTheSameSourceIsStillADuplicate() {
         ingest("shop.events", """
@@ -160,12 +120,6 @@ class SourceScopedIdentityTest {
         assertThat(allIngested()).hasSize(1);
     }
 
-    /**
-     * Arrival order is not identity. Observations are filed by their key and carry the
-     * time the producer reported, so a later-published event read first still belongs to
-     * its own execution and keeps its own timestamp — the out-of-order detectors judge the
-     * sequence afterwards, on event time.
-     */
     @Test
     void observationsArrivingOutOfOrderKeepTheirOwnIdentityAndTime() {
         ingest("shop.events", """
@@ -181,8 +135,6 @@ class SourceScopedIdentityTest {
         assertThat(ingested.get(0).eventTime()).isAfter(ingested.get(1).eventTime());
     }
 
-    // ── the correlation ladder ────────────────────────────────────────────────
-
     @Test
     void aDeclaredCorrelationKeyIsRecordedAsSuch() {
         ingest("shop.events", """
@@ -192,11 +144,6 @@ class SourceScopedIdentityTest {
                 .isEqualTo(CorrelationBasis.DECLARED_KEY);
     }
 
-    /**
-     * The second rung. A system whose services share no business identifier can still be
-     * observed if it propagates trace context — which an auto-instrumentation agent
-     * provides as a deployment flag, not a code change. Recommended, never required.
-     */
     @Test
     void propagatedTraceContextCorrelatesWhenNoBusinessKeyExists() {
         IngestionResult result = ingest("shop.events", """
@@ -210,7 +157,6 @@ class SourceScopedIdentityTest {
         assertThat(ingested.correlationBasis()).isEqualTo(CorrelationBasis.PROPAGATED_CONTEXT);
     }
 
-    /** A declared key outranks trace context: business identity beats request identity. */
     @Test
     void aDeclaredKeyIsPreferredOverTraceContext() {
         ingest("shop.events", """
@@ -222,12 +168,6 @@ class SourceScopedIdentityTest {
         assertThat(ingested.correlationBasis()).isEqualTo(CorrelationBasis.DECLARED_KEY);
     }
 
-    /**
-     * There is no rung below trace context. Nothing here falls back on a business key, a
-     * timestamp window or an event type, because none of those is evidence — and a wrong
-     * correlation does not surface as an error, it surfaces as a diagnosis that quietly
-     * makes no sense.
-     */
     @Test
     void anObservationWithNothingOnTheLadderIsRefusedRatherThanGuessedAt() {
         IngestionResult result = ingest("shop.events", """
@@ -237,7 +177,6 @@ class SourceScopedIdentityTest {
         verify(correlationService, never()).processEvent(any(IngestedEvent.class));
     }
 
-    /** The refusal says what would have made it work, in the source's own terms. */
     @Test
     void theRefusalNamesBothRungsThatWereTried() {
         IngestionResult result = ingest("shop.events", """
@@ -246,13 +185,6 @@ class SourceScopedIdentityTest {
         assertThat(result.reason()).contains("orderNo").contains("trace context");
     }
 
-    // ── an unmapped source is a namespace too ─────────────────────────────────
-
-    /**
-     * A source matching no mapping falls back to the identity mapping, and that fallback is
-     * a namespace like any other — so an unmapped producer cannot land inside a mapped
-     * system's execution by using the same identifier.
-     */
     @Test
     void anUnmappedSourceGetsTheDefaultNamespace() {
         ingest("something.else", """
@@ -260,8 +192,6 @@ class SourceScopedIdentityTest {
 
         assertThat(allIngested().get(0).sagaId()).isEqualTo("default::ORD-A");
     }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private IngestionResult ingest(String sourceRef, String payload) {
         return ingestion.ingest(new RawObservation(

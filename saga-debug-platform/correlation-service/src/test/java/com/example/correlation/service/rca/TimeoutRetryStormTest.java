@@ -33,18 +33,9 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * L3: R02 promotes a retry storm to STRONG only on the source's declared timeout wording.
- *
- * <p>It used to lowercase every retry payload and search it for "timeout", so the core
- * carried one language's exception vocabulary and any field that merely contained the word
- * counted as evidence.
- */
 class TimeoutRetryStormTest {
-
     private static final FailureSignalRegistry NO_DECLARATIONS = new FailureSignalRegistry("");
 
-    /** SC12's retry payloads, read through the demo's declaration: unchanged verdict. */
     @Test
     void theDeclaredTimeoutWordingMakesTheStormStrong() {
         RcaCandidate r02 = r02(analyze(SagaStatus.IN_PROGRESS, repositoryDeclarations(), retries(
@@ -63,7 +54,6 @@ class TimeoutRetryStormTest {
         assertThat(r02.getStatus()).isEqualTo(CandidateStatus.WEAK_EVIDENCE);
     }
 
-    /** "timeout" outside the declared reason field: a config echo, not the retried failure. */
     @Test
     void theWordElsewhereInThePayloadIsNotEvidence() {
         RcaCandidate r02 = r02(analyze(SagaStatus.IN_PROGRESS, repositoryDeclarations(), retries(
@@ -85,8 +75,6 @@ class TimeoutRetryStormTest {
                 event("e-3", "PAYMENT_RETRY", payload, 2),
                 event("e-4", "PAYMENT_RETRY", payload, 3)};
     }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private static RcaResult analyze(SagaStatus status, FailureSignalRegistry failureSignals,
             SagaEvent... events) {
@@ -119,7 +107,6 @@ class TimeoutRetryStormTest {
                 new ExecutionProjectionService(), failureSignals, null).analyze("saga-1");
     }
 
-    /** The declarations production reads, as Sc06ReplayTest does, not a copy. */
     private static FailureSignalRegistry repositoryDeclarations() {
         Path here = Path.of("").toAbsolutePath();
         Path root = Files.exists(here.resolve("declarations")) ? here : here.getParent();

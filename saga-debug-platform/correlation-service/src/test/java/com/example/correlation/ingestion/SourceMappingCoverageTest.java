@@ -18,27 +18,11 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
-/**
- * The shapes a real system publishes that a single dotted path into the body cannot read.
- *
- * <p>Each of these was a system the platform could not observe without asking its owners
- * to change what they emit — which is the one thing this platform is not allowed to ask
- * for. They are written as mappings rather than as Java because that is the claim: the
- * cost of reading a new system is a YAML file.
- */
 class SourceMappingCoverageTest {
-
     private static final Instant TRANSPORT_TIME = Instant.parse("2026-01-01T12:00:00Z");
 
     private final CorrelationService correlationService = mock(CorrelationService.class);
 
-    // ── one field, more than one place ────────────────────────────────────────
-
-    /**
-     * A system that moved a field between versions of its events and kept publishing
-     * both. Declaring one path means choosing which half of the traffic to lose;
-     * declaring both reads all of it.
-     */
     @Test
     void aFieldIsFoundWhicheverOfItsDeclaredPlacesThisEventUsedIt() {
         String mapping = """
@@ -58,7 +42,6 @@ class SourceMappingCoverageTest {
                 {"id":"e2","data":{"orderId":"ORD-2"}}""").executionKey().rawId()).isEqualTo("ORD-2");
     }
 
-    /** Order is the declaration's, so a source can say which place it prefers. */
     @Test
     void theFirstDeclaredPlaceThatHasAValueWins() {
         IngestedEvent ingested = ingest("""
@@ -73,13 +56,6 @@ class SourceMappingCoverageTest {
         assertThat(ingested.executionKey().rawId()).isEqualTo("TOP");
     }
 
-    // ── the body is a string, not a document ──────────────────────────────────
-
-    /**
-     * The ordinary transactional outbox: the event body lives in a {@code text} column,
-     * so Debezium publishes it as a JSON string and a path into it used to stop at the
-     * quotation mark. Every such system was unreadable however it was mapped.
-     */
     @Test
     void aBodyEmbeddedAsAJsonStringIsRead() {
         IngestedEvent ingested = ingest("""
@@ -96,10 +72,6 @@ class SourceMappingCoverageTest {
         assertThat(ingested.eventType()).isEqualTo("SHIPPED");
     }
 
-    /**
-     * Text that is only text stays text. The unwrap is attempted only where the mapping
-     * asked to descend, so a string field read directly is never reinterpreted.
-     */
     @Test
     void aStringFieldReadDirectlyIsNotReinterpretedAsADocument() {
         IngestedEvent ingested = ingest("""
@@ -114,13 +86,6 @@ class SourceMappingCoverageTest {
         assertThat(ingested.executionKey().rawId()).isEqualTo("{not really json");
     }
 
-    // ── the type is the topic ─────────────────────────────────────────────────
-
-    /**
-     * One topic per event type, nothing in the body naming it. Common enough that the
-     * fallback existed already — but it handed the raw topic name to the specification
-     * untranslated, so it matched no declared step and the run could not be judged.
-     */
     @Test
     void anEventTypeCarriedOnlyByTheTopicNameIsReadAndTranslated() {
         IngestedEvent ingested = ingest("""
@@ -138,7 +103,6 @@ class SourceMappingCoverageTest {
         assertThat(ingested.eventType()).isEqualTo("ORDER_CREATED");
     }
 
-    /** The same translation applies when nothing is declared and the fallback is used. */
     @Test
     void theUndeclaredFallbackToTheSourceNameIsTranslatedToo() {
         IngestedEvent ingested = ingest("""
@@ -156,13 +120,6 @@ class SourceMappingCoverageTest {
         assertThat(ingested.eventType()).isEqualTo("ORDER_CREATED");
     }
 
-    // ── a vocabulary that keeps growing ───────────────────────────────────────
-
-    /**
-     * A source that versions its event names would otherwise need a line per version,
-     * and a new version published on a Friday would be an unrecognised event until
-     * someone noticed and edited the file.
-     */
     @Test
     void aVersionedEventNameIsTranslatedByPattern() {
         String mapping = """
@@ -184,11 +141,6 @@ class SourceMappingCoverageTest {
                 .isEqualTo("ORDER_CREATED");
     }
 
-    /**
-     * An exact key is never reinterpreted as a pattern. A source whose type names contain
-     * regex metacharacters — a dot is one, and dots are everywhere in event names — must
-     * keep meaning what it says.
-     */
     @Test
     void anExactMatchWinsOverAPatternThatWouldAlsoMatch() {
         IngestedEvent ingested = ingest("""
@@ -207,13 +159,6 @@ class SourceMappingCoverageTest {
         assertThat(ingested.eventType()).isEqualTo("ORDER_CREATED_V2");
     }
 
-    // ── fields that are not in the body at all ────────────────────────────────
-
-    /**
-     * The event time in a header. The clock used to be the one field that could only be
-     * read from inside the document, so a system that put it in a header had every
-     * duration measured against broker arrival instead.
-     */
     @Test
     void theEventTimeIsReadFromAHeader() {
         IngestedEvent ingested = ingest("""
@@ -230,7 +175,6 @@ class SourceMappingCoverageTest {
         assertThat(ingested.eventTime()).isEqualTo(Instant.parse("2026-01-01T09:30:00Z"));
     }
 
-    /** An epoch in a header is an epoch, whichever unit it is in. */
     @Test
     void anEpochEventTimeIsReadFromAHeader() {
         IngestedEvent ingested = ingest("""
@@ -247,11 +191,6 @@ class SourceMappingCoverageTest {
         assertThat(ingested.eventTime()).isEqualTo(Instant.ofEpochMilli(1767258000000L));
     }
 
-    /**
-     * The business key an operator searches by. It used to be read by looking for a
-     * payload field named {@code orderId} — the name of this platform's own demo domain,
-     * so every other system's saga list showed a blank column.
-     */
     @Test
     void theBusinessKeyIsReadFromWhereTheSourceKeepsIt() {
         IngestedEvent ingested = ingest("""
@@ -267,13 +206,6 @@ class SourceMappingCoverageTest {
         assertThat(ingested.businessKey()).isEqualTo("BK-2026-001");
     }
 
-    // ── a second identifier for the same run ──────────────────────────────────
-
-    /**
-     * A source whose services do not share one id declares the second one it carries.
-     * What is done with it is {@link ExecutionAliasResolver}'s; that it is read from the
-     * source's own path, like everything else, is this test's.
-     */
     @Test
     void aSecondIdentifierIsReadFromWhereTheSourceDeclaresIt() {
         SourceMapping mapping = parse("""
@@ -294,7 +226,6 @@ class SourceMappingCoverageTest {
         assertThat(mapping.aliasKey(payload, observation)).contains("ORD-7");
     }
 
-    /** A source declaring none carries none, rather than something guessed at. */
     @Test
     void aSourceThatDeclaresNoSecondIdentifierHasNone() {
         SourceMapping mapping = parse("""
@@ -308,13 +239,6 @@ class SourceMappingCoverageTest {
                 {"paymentId":"PAY-7","orderId":"ORD-7"}"""), null)).isEmpty();
     }
 
-    // ── nothing is invented ───────────────────────────────────────────────────
-
-    /**
-     * None of the forms above is a licence to guess. When every declared place is empty
-     * the observation is still refused, because a wrong correlation key does not surface
-     * as an error — it surfaces as a diagnosis that quietly makes no sense.
-     */
     @Test
     void anObservationMatchingNoneOfTheDeclaredPlacesIsStillRefused() {
         ingestRaw("""
@@ -328,8 +252,6 @@ class SourceMappingCoverageTest {
 
         verify(correlationService, never()).processEvent(any(IngestedEvent.class));
     }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private IngestedEvent ingest(String mappingYaml, String sourceRef, String payload) {
         return ingest(mappingYaml, sourceRef, payload, Map.of());
@@ -346,8 +268,6 @@ class SourceMappingCoverageTest {
 
     private void ingestRaw(String mappingYaml, String sourceRef, String payload,
             Map<String, String> headers) {
-        // Several of these cases ingest twice to show one mapping reading two shapes,
-        // so each ingestion is verified against a clean slate.
         org.mockito.Mockito.reset(correlationService);
 
         SourceMapping mapping = parse(mappingYaml);

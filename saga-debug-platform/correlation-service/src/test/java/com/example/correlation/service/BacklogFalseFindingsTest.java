@@ -13,16 +13,7 @@ import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/**
- * EXT-OVERLOAD-FALSE-FINDINGS: findings raised while the observer is behind its input.
- *
- * <p>Bench 2026-10-21 (adc697a, 1000 ev/s): after the backlog drained, 39 SAGA_STUCK stood on
- * runs that had completed within a second by the source's stamps, and 61 COMPENSATION_MISSING
- * on runs that were COMPENSATED. Each was true of the evidence in hand when raised; the
- * missing events were unread, not absent.
- */
 class BacklogFalseFindingsTest {
-
     private static final ExecutionKey RUN = ExecutionKey.of("default", "S-1");
 
     @Test
@@ -45,17 +36,11 @@ class BacklogFalseFindingsTest {
         deliver(p, "e1", "ORDER_CREATED", t0, t0);
         p.detector.detectStuckSagas();
 
-        // Stamped 100s after the order: the step's 10s timeout really was exceeded (R06 case).
         deliver(p, "e2", "PAYMENT_COMPLETED", t0.plusSeconds(100), Instant.now());
 
         assertThat(standing(p)).contains(AnomalyType.SAGA_STUCK);
     }
 
-    /**
-     * FTGO kitchen-stop (6879a58): VALIDATE_REQUESTED read 20 ms after TICKET_CREATE_REQUESTED
-     * though stamped before it, then 64 s of real silence. The neighbour already in hand
-     * withdrew the finding; only what is read after it may.
-     */
     @Test
     void stuckStandsWhenOnlyEventsReadBeforeItAreClose() {
         ReplayPipeline p = new ReplayPipeline();
@@ -77,7 +62,7 @@ class BacklogFalseFindingsTest {
         deliver(p, "e1", "ORDER_CREATED", t0, t0);
         deliver(p, "e2", "PAYMENT_COMPLETED", t0.plusMillis(500), t0);
         deliver(p, "e3", "INVENTORY_RESERVED", t0.plusMillis(1000), t0);
-        // The pass's run list still says in progress: the ending was ingested after it was read.
+
         p.instances.values().forEach(s -> s.setStatus(SagaStatus.IN_PROGRESS));
 
         p.detector.detectStuckSagas();
@@ -85,7 +70,6 @@ class BacklogFalseFindingsTest {
         assertThat(standing(p)).doesNotContain(AnomalyType.SAGA_STUCK);
     }
 
-    /** Same race as the stuck pass, for MISSING_TERMINAL_EVENT (bench 2000 ev/s, d047c60). */
     @Test
     void missingTerminalPassSkipsARunThatEndedAfterTheRunListWasRead() {
         ReplayPipeline p = new ReplayPipeline();
@@ -109,7 +93,7 @@ class BacklogFalseFindingsTest {
         ReplayPipeline p = new ReplayPipeline();
         Instant t0 = Instant.now().minusSeconds(120);
         deliver(p, "e2", "PAYMENT_COMPLETED", t0.plusMillis(500), t0);
-        // Earlier-stamped, read just now from a lagging partition.
+
         deliver(p, "e1", "ORDER_CREATED", t0, Instant.now());
 
         p.detector.detectStuckSagas();
@@ -117,11 +101,6 @@ class BacklogFalseFindingsTest {
         assertThat(standing(p)).doesNotContain(AnomalyType.SAGA_STUCK);
     }
 
-    /**
-     * EXT-STUCK-CITES-ARRIVAL: silence runs from the latest arrival, but the finding names where
-     * the run stopped. FTGO accounting-pause: the earlier command was read a second after the
-     * later one, and the dashboard marked CREATE_TICKET instead of AUTHORIZE_CARD.
-     */
     @Test
     void stuckCitesTheLatestStepNotTheLatestArrival() {
         ReplayPipeline p = new ReplayPipeline();
@@ -153,7 +132,6 @@ class BacklogFalseFindingsTest {
         assertThat(standing(p)).doesNotContain(AnomalyType.COMPENSATION_MISSING);
     }
 
-    /** Ingest holds the run the way RCA does; see IngestRcaLockTest for why. */
     @Test
     void ingestLocksTheRunItUpdates() {
         ReplayPipeline p = new ReplayPipeline();
@@ -164,10 +142,6 @@ class BacklogFalseFindingsTest {
         verify(p.sagas, atLeastOnce()).findByIdForUpdate(RUN.canonical());
     }
 
-    /**
-     * A diagnosis is dated when its evidence was read: an analysis slowed by load must not
-     * carry a stamp later than a withdrawal that came after its read.
-     */
     @Test
     void aDiagnosisIsDatedWhenItsEvidenceWasRead() {
         ReplayPipeline p = new ReplayPipeline();
@@ -186,11 +160,6 @@ class BacklogFalseFindingsTest {
         assertThat(result.getCreatedAt()).isBeforeOrEqualTo(readAt.get());
     }
 
-    /**
-     * EXT-RCA-STALE-RACE: the analysis read ORPHAN_EVENT standing, the withdrawal committed
-     * after that read but carries an earlier stamp. No stamp comparison sees it; the cited
-     * finding being withdrawn does.
-     */
     @Test
     void aDiagnosisCitingAWithdrawnFindingIsRedone() {
         ReplayPipeline p = new ReplayPipeline();
@@ -205,7 +174,7 @@ class BacklogFalseFindingsTest {
             return p.anomalies.stream().filter(a -> ids.contains(a.getId())).toList();
         });
         when(p.anomalyRepo.findSagaIdsWithAnomaliesSince(any())).thenReturn(List.of(RUN.canonical()));
-        // The sweep reaches analyze through the Spring proxy; the harness has none.
+
         org.springframework.test.util.ReflectionTestUtils.setField(p.rca, "self", p.rca);
 
         com.example.correlation.domain.RcaResult first = p.rca.analyze(RUN.canonical());

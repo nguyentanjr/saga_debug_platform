@@ -20,21 +20,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
-/**
- * Ingests events from a system that has never heard of this platform.
- *
- * <p>Until a mapping existed, attaching the platform to an existing system meant editing
- * that system's producers so their events carried fields named {@code sagaId},
- * {@code eventId}, {@code eventType} and {@code timestamp}. No system emits those, which
- * made "works on any microservice system" true only for systems willing to be changed.
- *
- * <p>The payloads below are shaped like something a real order system would publish:
- * different field names, nested objects, a business identifier as the correlation key,
- * and event types in the source's own vocabulary. Nothing about them is adapted to this
- * platform.
- */
 class ForeignSystemIngestionTest {
-
     private static final String TOPIC = "legacy.orders.events";
     private static final Instant EVENT_TIME = Instant.parse("2026-01-01T00:00:04Z");
 
@@ -82,26 +68,15 @@ class ForeignSystemIngestionTest {
 
         IngestedEvent ingested = captured();
         assertThat(ingested.eventId()).isEqualTo("evt-8891");
-        // The correlation key is a business identifier from a nested object.
+
         assertThat(ingested.executionKey().rawId()).isEqualTo("ORD-42");
-        // Their vocabulary, translated into the specification's.
+
         assertThat(ingested.eventType()).isEqualTo("PAYMENT_COMPLETED");
         assertThat(ingested.serviceName()).isEqualTo("billing-api");
         assertThat(ingested.eventTime()).isEqualTo(EVENT_TIME);
         assertThat(ingested.causationId()).isEqualTo("evt-8890");
     }
 
-    /**
-     * The trace id is read from where this system keeps it, not from a field named
-     * {@code traceId} at the top level.
-     *
-     * <p>Every other mapped field went through {@code SourceMapping}; this one did not.
-     * {@code SourceMapping.traceId} existed and was declared, but nothing ever called it,
-     * so the value was recovered downstream by searching the payload for this platform's
-     * own name for the field. For a system that nests it — as this one does — the effect
-     * was a saga whose events all reported no trace: no link from the diagnosis to the
-     * traces behind it, and the trace-context detector permanently blind for that system.
-     */
     @Test
     void theTraceIdIsReadFromWhereTheirSystemKeepsIt() {
         consumer.handleEvent(record("""
@@ -119,12 +94,6 @@ class ForeignSystemIngestionTest {
         assertThat(captured().traceId()).isEqualTo("4bf92f3577b34da6a3ce929d0e0e4736");
     }
 
-    /**
-     * A source that genuinely reports no trace yields null rather than something invented.
-     * The distinction matters downstream: "this system does not publish trace context" is
-     * a different finding from "this event lost the trace its siblings carry", and only
-     * the second is an anomaly.
-     */
     @Test
     void aSourceThatReportsNoTraceYieldsNoTraceId() {
         consumer.handleEvent(record("""
@@ -141,8 +110,6 @@ class ForeignSystemIngestionTest {
 
     @Test
     void theEventTimeComesFromTheirFieldNotFromTheBroker() {
-        // Transport time is five minutes later; every duration would be wrong if the
-        // broker's clock were used because their timestamp field is named differently.
         consumer.handleEvent(record("""
                 {
                   "id": "evt-1",
@@ -157,9 +124,6 @@ class ForeignSystemIngestionTest {
 
     @Test
     void anUnmappedEventTypePassesThroughUnchanged() {
-        // A type the mapping does not translate is not dropped: the workflow
-        // specification may know it, and if not the platform reports it as unmapped
-        // rather than silently discarding an observation.
         consumer.handleEvent(record("""
                 {
                   "id": "evt-9",
@@ -182,7 +146,6 @@ class ForeignSystemIngestionTest {
                 }
                 """));
 
-        // Nothing ties it to an execution, and no field is guessed at in its place.
         verify(correlationService, never()).processEvent(any(IngestedEvent.class));
     }
 
@@ -198,8 +161,6 @@ class ForeignSystemIngestionTest {
 
     @Test
     void observingANewSystemIsTwoFilesAndNoJavaChange() {
-        // How to read it, and what it is supposed to do. Both are discovered from the
-        // classpath at startup, by the same mechanism, with no code aware of either name.
         SourceMappingRegistry sources = new SourceMappingRegistry();
         sources.load();
         WorkflowRegistry workflows = new WorkflowRegistry();
@@ -208,8 +169,6 @@ class ForeignSystemIngestionTest {
         assertThat(sources.sourceNames()).contains("legacy-order-system");
         assertThat(workflows.workflowNames()).contains("ORDER_SAGA");
     }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private IngestedEvent captured() {
         ArgumentCaptor<IngestedEvent> captor = ArgumentCaptor.forClass(IngestedEvent.class);

@@ -13,17 +13,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Covers a workflow whose steps have more than two possible outcomes.
- *
- * <p>Assessing a loan approves, refers to a human, or rejects. Only the third is a
- * failure; the other two are the step doing its job and routing differently. With a
- * fixed completed/failed vocabulary two of the three had to be miscalled, and every
- * transition was checked against one of two conditions. Outcomes are now named by the
- * workflow and matched against the transition declared for that name.
- */
 class NamedOutcomeRoutingTest {
-
     private static final Instant T0 = Instant.parse("2026-01-01T00:00:00Z");
 
     private final WorkflowSpec spec =
@@ -42,8 +32,6 @@ class NamedOutcomeRoutingTest {
 
     @Test
     void anOutcomeThatRoutesOnwardIsNotTreatedAsAFailure() {
-        // The distinction the old vocabulary could not draw: being referred to a human
-        // is not the assessment failing.
         assertThat(spec.classifyEvent("ASSESSMENT_FLAGGED").orElseThrow().role())
                 .isEqualTo(EventRole.Role.COMPLETED);
         assertThat(statusAfter("ASSESSMENT_FLAGGED")).contains(SagaStatus.IN_PROGRESS);
@@ -62,7 +50,6 @@ class NamedOutcomeRoutingTest {
         assertThat(spec.judgeTransition("ASSESS_RISK", "HUMAN_REVIEW", "MANUAL_REVIEW"))
                 .isEqualTo(WorkflowSpec.TransitionVerdict.VALID);
 
-        // Right destination, wrong outcome: approval does not route to human review.
         assertThat(spec.judgeTransition("ASSESS_RISK", "HUMAN_REVIEW", "APPROVED"))
                 .isEqualTo(WorkflowSpec.TransitionVerdict.INVALID);
     }
@@ -81,7 +68,6 @@ class NamedOutcomeRoutingTest {
 
     @Test
     void aStepReachedThroughEitherBranchIsMeasuredFromWhicheverBranchRanIt() {
-        // Straight through: disbursement starts when the assessment approved.
         ExecutionProjection direct = project(
                 event("d1", "APPLICATION_SUBMITTED", T0),
                 event("d2", "ASSESSMENT_APPROVED", T0.plusSeconds(4)),
@@ -89,7 +75,6 @@ class NamedOutcomeRoutingTest {
         assertThat(direct.operation("DISBURSE_FUNDS").orElseThrow().duration().toSeconds())
                 .isEqualTo(5);
 
-        // Via review: it starts when the reviewer approved, not when scoring finished.
         ExecutionProjection viaReview = project(
                 event("r1", "APPLICATION_SUBMITTED", T0),
                 event("r2", "ASSESSMENT_FLAGGED", T0.plusSeconds(4)),
@@ -106,28 +91,21 @@ class NamedOutcomeRoutingTest {
                 event("d2", "ASSESSMENT_APPROVED", T0.plusSeconds(4)),
                 event("d3", "FUNDS_DISBURSED", T0.plusSeconds(9)));
 
-        // The manual-review arm was not exercised. It is missing, not overdue.
         assertThat(direct.operation("HUMAN_REVIEW")).isEmpty();
         assertThat(direct.unmappedEvents()).isEmpty();
     }
 
     @Test
     void convergingBranchesAreNotMistakenForAJoin() {
-        // DISBURSE_FUNDS is reachable from the assessment directly and from the review,
-        // but only one of those paths is ever taken. Requiring both, as a join does,
-        // would leave every execution looking like it lost an arm.
         assertThat(spec.predecessorSteps("DISBURSE_FUNDS"))
                 .containsExactlyInAnyOrder("ASSESS_RISK", "HUMAN_REVIEW");
         assertThat(spec.isJoin("DISBURSE_FUNDS")).isFalse();
 
-        // What separates them: the review is itself downstream of the assessment.
         assertThat(spec.isUpstreamOf("ASSESS_RISK", "HUMAN_REVIEW")).isTrue();
     }
 
     @Test
     void theConventionalLifecycleKeysStillWork() {
-        // Steps declaring completed/failed keep working unchanged, mapped to the two
-        // conventional outcome names.
         assertThat(spec.classifyEvent("FUNDS_DISBURSED"))
                 .contains(new EventRole("DISBURSE_FUNDS", EventRole.Role.COMPLETED, "SUCCESS"));
         assertThat(spec.classifyEvent("DISBURSEMENT_FAILED"))
@@ -140,8 +118,6 @@ class NamedOutcomeRoutingTest {
                 .contains("ASSESSMENT_APPROVED", "ASSESSMENT_FLAGGED", "ASSESSMENT_REJECTED",
                         "REVIEW_APPROVED", "FUNDS_DISBURSED");
     }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private Optional<SagaStatus> statusAfter(String eventType) {
         return spec.classifyEvent(eventType).flatMap(spec::statusAfter);

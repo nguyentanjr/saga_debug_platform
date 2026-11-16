@@ -9,21 +9,10 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Works out how to read a source from a sample of its events.
- *
- * <p>The alternative is a person reading someone else's payloads and deciding which field
- * is the identity, which the correlation key, which the clock. Most of that is a property
- * of the values, not of the field names: an identity never repeats, a correlation key
- * does, a timestamp parses as one, and a causal reference names an identity already in
- * the sample.
- */
 class SourceMappingInferrerTest {
-
     private final ObjectMapper mapper = new ObjectMapper();
     private final SourceMappingInferrer inferrer = new SourceMappingInferrer();
 
-    /** Three executions of four steps, in a shape nothing here was written around. */
     private final List<JsonNode> sample = parse("""
             [
              {"id":"e1","kind":"cart.opened",  "at":"2026-01-01T00:00:00Z",
@@ -53,7 +42,6 @@ class SourceMappingInferrerTest {
     void theCorrelationKeyIsTheFieldThatRepeats() {
         var inferred = inferrer.infer(sample);
 
-        // Nested, and named nothing this platform would recognise.
         assertThat(inferred.fields().get("executionId").path()).isEqualTo("ctx.ref");
         assertThat(inferred.fields().get("executionId").basis()).contains("repeats across events");
     }
@@ -66,7 +54,6 @@ class SourceMappingInferrerTest {
         assertThat(inferred.fields().get("eventTime").basis()).contains("parses as a timestamp");
     }
 
-    /** The one rule close to proof: a causal reference names an id already in the sample. */
     @Test
     void aCausalReferenceIsRecognisedByPointingAtAnIdentity() {
         var inferred = inferrer.infer(sample);
@@ -87,7 +74,7 @@ class SourceMappingInferrerTest {
                 """));
 
         assertThat(inferred.fields().get("eventTime").path()).isEqualTo("at");
-        // A quantity is a number, not a clock.
+
         assertThat(inferred.fields().values())
                 .noneMatch(proposal -> proposal.path().equals("qty"));
     }
@@ -96,8 +83,6 @@ class SourceMappingInferrerTest {
     void aNameBasedChoiceSaysThatItWasNameBased() {
         var inferred = inferrer.infer(sample);
 
-        // Event type and service name are both short repeated strings; the values cannot
-        // separate them, so the field name does — and the proposal admits it.
         assertThat(inferred.fields().get("eventType").path()).isEqualTo("kind");
         assertThat(inferred.fields().get("eventType").basis())
                 .contains("Chosen on the field name, not on the data");
@@ -108,8 +93,6 @@ class SourceMappingInferrerTest {
     void theSourcesOwnVocabularyIsReportedSoASpecCanBeWrittenInIt() {
         var inferred = inferrer.infer(sample);
 
-        // Nothing has to be renamed: a workflow specification can be written using these
-        // names directly, which is why the eventTypes translation is optional.
         assertThat(inferred.observedEventTypes())
                 .containsExactlyInAnyOrder("cart.opened", "cart.charged", "cart.shipped");
     }

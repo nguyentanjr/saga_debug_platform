@@ -12,15 +12,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * EXT-HOTEL-EVENT-TIME: a step's outcome is not placed before the step's own start.
- *
- * <p>Hotel live (semotpan, 2026-10-21): PAYMENT_REJECTED carried a transport time 0.6 s before
- * the TAKE_PAYMENT_REQUESTED it answered. Ordered by clock the run went TAKE_PAYMENT -> BOOK_ROOM
- * on FAILED and INVALID_TRANSITION stood. Events, stamps and read order as observed.
- */
 class StepStartCausalityTest {
-
     private static final ExecutionKey RUN = ExecutionKey.of("hotel-saga", "6e91cae7");
     private static final Instant T = Instant.parse("2026-10-21T09:52:56Z");
 
@@ -40,7 +32,6 @@ class StepStartCausalityTest {
         assertThat(p.instances.get(RUN.canonical()).getStatus()).isEqualTo(SagaStatus.COMPENSATED);
     }
 
-    /** With two attempts in hand the specification does not say which one an outcome answers. */
     @Test
     void twoStartsOfOneStepLeaveTheClockInCharge() {
         ReplayPipeline p = new ReplayPipeline(declaredRegistry());

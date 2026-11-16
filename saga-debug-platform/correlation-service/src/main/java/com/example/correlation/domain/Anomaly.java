@@ -10,8 +10,6 @@ import java.util.List;
 @Entity
 @Table(name = "anomalies")
 public class Anomaly {
-
-    /** Read-time qualification of historical findings; does not delete or retract their evidence. */
     @Transient
     private List<String> workflowConflicts = List.of();
 
@@ -51,14 +49,6 @@ public class Anomaly {
     @Column(name = "measured_at")
     private Instant measuredAt;
 
-    /**
-     * When this finding was withdrawn, or null while it still stands.
-     *
-     * <p>Set when later observations falsified the claim rather than when the underlying
-     * problem was fixed — see {@link AnomalyType#assertsAbsence()}. The row is kept: a
-     * platform that silently deletes findings it has already reported cannot be trusted
-     * about the ones it keeps.
-     */
     @Column(name = "retracted_at")
     private Instant retractedAt;
 

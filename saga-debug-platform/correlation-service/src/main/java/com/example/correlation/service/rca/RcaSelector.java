@@ -20,7 +20,6 @@ import java.util.stream.Collectors;
 
 @Service
 public class RcaSelector {
-
     private static final Set<String> FALLBACK_RULES = Set.of("R20", "R21");
 
     public SelectionResult select(List<CandidateAssessment> input,
@@ -29,11 +28,6 @@ public class RcaSelector {
         return select(input, anomalies, saga, ExecutionOrder.unknown());
     }
 
-
-    /**
-     * @param order where each candidate's anchor sits in the execution, used to order
-     *              candidates by when the execution first diverged instead of by rule id
-     */
     public SelectionResult select(List<CandidateAssessment> input,
             List<Anomaly> anomalies,
             SagaInstance saga,
@@ -61,44 +55,6 @@ public class RcaSelector {
         return result;
     }
 
-    /**
-     * The one candidate this selection is willing to publish as the root cause.
-     *
-     * <p>The ranking above already answers "which of these should a reader look at
-     * first"; this only reads that answer off the front of the list. Nothing is
-     * re-scored, no threshold is relaxed, and no candidate is promoted that the rules did
-     * not already assess as {@link CandidateStatus#STRONG_EVIDENCE}.
-     *
-     * <p>Restricted to that one tier on purpose. SUPPORTING_EVIDENCE corroborates a
-     * finding rather than establishing one, WEAK_EVIDENCE is explicitly a hypothesis, and
-     * RULED_OUT has been withdrawn — publishing any of them as <em>the</em> root cause
-     * would state more than the evidence does. Nothing here changes which candidates
-     * exist or what status they carry; a saga with no strong candidate produces no
-     * promotion, exactly as before.
-     *
-     * <p>The fallback rules R20/R21 cannot arrive here: they are assessed WEAK_EVIDENCE
-     * by the rules that raise them, and {@link #applyExclusions} withdraws them outright
-     * once anything specific is available.
-     *
-     * <h2>Why evidence tier is not the only question</h2>
-     * A root cause answers "what did the observed system do wrong", so a candidate can
-     * only be promoted if that is what it is a claim about. A finding whose subject is
-     * this platform's own reception — which records it read first, which partitions it
-     * was behind on — is strong evidence of something real and still not an answer to
-     * that question. {@code OUT_OF_ORDER_DELIVERY (R14)} is the case this was written
-     * for: on backlog ingestion it anchors at the first step of the run, so the ranking's
-     * execution-position key put it ahead of an unacknowledged compensation and a
-     * downstream timeout, and it was published as the cause of runs whose observed
-     * systems had done nothing wrong.
-     *
-     * <p>Nothing is suppressed by this. Such a candidate is ranked exactly where it was,
-     * keeps its status, severity, anchor and evidence, and is still returned in
-     * {@code candidates}; it is passed over here and here only. See {@link ClaimSubject}.
-     *
-     * @return the first strongly-evidenced candidate in ranked order whose claim is about
-     *         the observed system, or null when the selection has none — which is a
-     *         refusal to name a cause, not a failure
-     */
     private RcaCandidate promote(List<RcaCandidate> ranked) {
         return ranked.stream()
                 .filter(candidate -> candidate.getStatus() == CandidateStatus.STRONG_EVIDENCE)
@@ -107,18 +63,9 @@ public class RcaSelector {
                 .orElse(null);
     }
 
-
-    /**
-     * Where a candidate sits in the execution, and which steps precede which.
-     *
-     * <p>Supplied by the caller because only it can build the execution projection; the
-     * selector stays free of persistence and of workflow lookups.
-     */
     public interface ExecutionOrder {
-        /** Position of a step in this execution, or empty when it was never observed. */
         OptionalInt positionOf(String stepId);
 
-        /** Whether {@code candidate} is on the dependency path leading into {@code step}. */
         boolean isUpstream(String candidate, String step);
 
         static ExecutionOrder unknown() {
@@ -129,14 +76,6 @@ public class RcaSelector {
         }
     }
 
-
-    /**
-     * Records, for each candidate, which other candidates are anchored upstream of it.
-     *
-     * <p>Deliberately not phrased as causation. Being upstream and earlier is a reason
-     * for a reader to look at that candidate first; it does not establish that it
-     * produced this one, and the platform has no evidence that would.
-     */
     private void recordPrecedence(List<CandidateAssessment> candidates, ExecutionOrder order) {
         for (CandidateAssessment candidate : candidates) {
             String step = candidate.getAnchorStepId();
@@ -164,15 +103,6 @@ public class RcaSelector {
         }
     }
 
-
-    /**
-     * Evidence tier first, then position in the execution, then severity.
-     *
-     * <p>The previous ordering fell through from severity to a lexicographic comparison
-     * of rule ids, so whichever candidate happened to be named "R07" outranked "R10".
-     * Execution position is at least a property of the failure being diagnosed. Rule id
-     * remains last purely to keep the order deterministic.
-     */
     private Comparator<CandidateAssessment> comparator(ExecutionOrder order) {
         return Comparator
                 .comparingInt((CandidateAssessment c) -> statusRank(c.getStatus()))
@@ -205,12 +135,7 @@ public class RcaSelector {
         return 0;
     }
 
-
     private void applyExclusions(List<CandidateAssessment> candidates) {
-        // EXT-FALLBACK: specific evidence is a candidate that says something about the
-        // observed system and was not itself ruled out. R14, about this platform's own read
-        // order, used to count -- so the same run kept or lost its source hypotheses depending
-        // on delivery order (SPM retest, reverse and last-first orders).
         boolean hasSpecificEvidence = candidates.stream()
                 .anyMatch(c -> !FALLBACK_RULES.contains(c.getRuleId())
                         && c.getSubject() == ClaimSubject.OBSERVED_SYSTEM
@@ -227,22 +152,6 @@ public class RcaSelector {
         }
     }
 
-    /**
-     * Whether this selection has evidence about the observed system, and if not, whether
-     * there is anything left that would call for a diagnosis.
-     *
-     * <p>Asks the same question as {@link #promote}. It used to count any STRONG or
-     * SUPPORTING candidate, including one whose subject is the observation process, and
-     * any standing anomaly, including one only such a candidate reports. So a completed
-     * run whose events happened to be read out of order came out EVIDENCE_AVAILABLE with
-     * no cause promoted, while the same events read in order came out NO_DIAGNOSIS_NEEDED:
-     * the status depended on delivery order although the diagnosis did not (ROADMAP F19).
-     *
-     * <p>An anomaly is set aside only when every candidate citing it is about the
-     * observation process. Anything an observed-system candidate also cites, and anything
-     * no candidate cites, still counts: nothing here decides that an unexplained finding is
-     * harmless.
-     */
     private RcaStatus resolveStatus(List<CandidateAssessment> evidenceCandidates,
             List<CandidateAssessment> allCandidates,
             List<Anomaly> anomalies,
@@ -290,18 +199,12 @@ public class RcaSelector {
         }
         return missing;
     }
-    
+
     public static class SelectionResult {
         private RcaStatus rcaStatus;
         private List<RcaCandidate> candidates = new ArrayList<>();
         private List<String> missingEvidence = new ArrayList<>();
 
-        /**
-         * The candidate this selection promotes to the reported root cause, or null.
-         *
-         * <p>One of the objects in {@link #candidates}, not a copy, so the promoted cause
-         * and the candidate list can never disagree about a rule's status or evidence.
-         */
         private RcaCandidate primary;
 
         public RcaStatus getRcaStatus() { return rcaStatus; }

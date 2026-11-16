@@ -18,28 +18,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-/**
- * Builds an {@link ExecutionProjection} from a saga's stored events and its workflow
- * specification.
- *
- * <p>Pure with respect to persistence: it reads the events it is handed and touches
- * nothing else, so its behaviour is fully determined by (events, spec) and can be
- * tested without a database, a broker, or a running container.
- */
 @Service
 public class ExecutionProjectionService {
-
-    /**
-     * @param events any order; the projection sorts by event time and is invariant to
-     *               the order in which the events were delivered or stored
-     */
     public ExecutionProjection project(String sagaId, List<SagaEvent> events, WorkflowSpec spec) {
         if (events == null || events.isEmpty()) {
             return ExecutionProjection.empty(sagaId);
         }
         if (spec == null) {
-            // Without a spec nothing can be attributed to a step. Report every event as
-            // unmapped rather than guessing structure from adjacency.
             return new ExecutionProjection(sagaId, List.of(), List.copyOf(events));
         }
 
@@ -69,8 +54,6 @@ public class ExecutionProjectionService {
                     .add(new RoleObservation(event, role.get().role()));
         }
 
-        // Terminal observation per step, resolved before building operations so a step
-        // can reference its predecessor's completion regardless of declaration order.
         Map<String, SagaEvent> terminalByStep = new LinkedHashMap<>();
         byStep.forEach((stepId, observations) ->
                 terminalOf(observations).ifPresent(obs -> terminalByStep.put(stepId, obs.event())));
@@ -93,7 +76,6 @@ public class ExecutionProjectionService {
             WorkflowSpec spec,
             Map<String, SagaEvent> terminalByStep,
             CausalIndex causal) {
-
         Optional<RoleObservation> terminal = terminalOf(observations);
         List<RoleObservation> retries = observations.stream()
                 .filter(o -> o.role() == EventRole.Role.RETRY)
@@ -132,24 +114,16 @@ public class ExecutionProjectionService {
                 List.copyOf(evidence));
     }
 
-    /**
-     * A step's start is, in order of preference: its own observed start event, then
-     * the completion of the single declared predecessor step. Positional neighbours
-     * are never used — that is precisely the coupling this projection removes.
-     */
     private StartRef resolveStart(String stepId,
             List<RoleObservation> observations,
             Optional<RoleObservation> terminal,
             WorkflowSpec spec,
             Map<String, SagaEvent> terminalByStep,
             CausalIndex causal) {
-
         Optional<RoleObservation> observedStart = observations.stream()
                 .filter(o -> o.role() == EventRole.Role.STARTED)
                 .findFirst();
 
-        // A step may declare one event type as both start and completion (a single
-        // observation covering the whole step). That is not an observed start boundary.
         boolean startIsDistinct = observedStart.isPresent()
                 && (terminal.isEmpty() || observedStart.get().event() != terminal.get().event());
 
@@ -158,10 +132,6 @@ public class ExecutionProjectionService {
             return new StartRef(start, start.getTimestamp(), StartProvenance.OBSERVED_START);
         }
 
-        // Preferred over anything read out of the specification: the producer stated
-        // which event this step was a response to, so the boundary is observed rather
-        // than assumed. Resolved from the step's earliest observation, since that is the
-        // one whose cause started the work.
         SagaEvent cause = observations.stream()
                 .map(RoleObservation::event)
                 .findFirst()
@@ -183,15 +153,10 @@ public class ExecutionProjectionService {
 
         boolean isJoin = spec.isJoin(stepId);
         if (isJoin) {
-            // A join starts when its last arm finishes, so every arm has to have been
-            // observed. A missing arm makes the start unknown rather than "whichever arms
-            // we happened to see", which would silently shorten the duration.
             if (predecessorTerminals.size() != predecessors.size()) {
                 return new StartRef(null, null, StartProvenance.NO_START_REFERENCE);
             }
         } else if (predecessorTerminals.isEmpty()) {
-            // Alternative branches converging: exactly one arm runs, so one observation
-            // is all there is to find. None means the step has no anchor.
             return new StartRef(null, null, StartProvenance.NO_START_REFERENCE);
         }
 
@@ -224,7 +189,6 @@ public class ExecutionProjectionService {
             attempts.add(new Attempt(ordinal, cursorInstant, endEvent.getTimestamp(),
                     cursorEventId, endEvent.getEventId()));
         } else if (attempts.isEmpty()) {
-            // Observed but neither retried nor terminated: one open attempt.
             attempts.add(new Attempt(ordinal, cursorInstant, null, cursorEventId, null));
         }
 
@@ -259,16 +223,7 @@ public class ExecutionProjectionService {
     private record RoleObservation(SagaEvent event, EventRole.Role role) {
     }
 
-    /**
-     * Resolves an observation to the event that caused it, when the producer said.
-     *
-     * <p>{@code causationId} names the causing event directly and is preferred.
-     * {@code parentSpanId} is the OpenTelemetry equivalent and is used when the direct
-     * reference is absent. A reference pointing outside this execution resolves to
-     * nothing rather than to a guess.
-     */
     private record CausalIndex(Map<String, SagaEvent> byEventId, Map<String, SagaEvent> bySpanId) {
-
         Optional<SagaEvent> causeOf(SagaEvent event) {
             if (event == null) return Optional.empty();
 

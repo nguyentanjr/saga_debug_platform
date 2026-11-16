@@ -13,8 +13,6 @@ import java.util.List;
 @Entity
 @Table(name = "rca_results")
 public class RcaResult {
-
-    /** Current refusal, also used by read APIs to avoid serving a pre-conflict diagnosis. */
     public static RcaResult workflowConflict(SagaInstance saga) {
         RcaResult result = new RcaResult();
         result.setSagaId(saga.getSagaId());

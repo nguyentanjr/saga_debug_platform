@@ -25,19 +25,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-/**
- * F4 paired experiment: replay the recorded SC06 observations through the real
- * correlation, inline detectors, RCA rules and selector. Repositories are in-memory
- * mocks; this does NOT test ingestion mapping, database atomicity, Kafka or scheduled
- * absence detectors. No recorded anomaly, diagnosis, or source_state enters the engine.
- * The captured receivedAt order and both clocks are preserved, not replayed against now.
- * Output is opt-in: -Dsc06.output=<new JSON path>. No live services are contacted.
- */
 class Sc06ReplayTest {
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules()
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
-    /** The repository root, whether surefire runs from the module or the reactor root. */
     private static Path repoRoot() {
         Path here = Path.of("").toAbsolutePath();
         return Files.exists(here.resolve("oracle/sc06-observations.json")) ? here : here.getParent();
@@ -52,8 +43,7 @@ class Sc06ReplayTest {
         assertThat(fixture.path("raw_runs").size()).isEqualTo(3);
         for (JsonNode run : fixture.path("raw_runs")) {
             ObjectNode first = replay(run);
-            // Determinism is the harness contract, not a golden R01 diagnosis: F4 must
-            // be free to change the answer without rewriting the replay test's oracle.
+
             assertThat(replay(run)).isEqualTo(first);
             rows.add(first);
         }
@@ -128,9 +118,7 @@ class Sc06ReplayTest {
                 sagas, eventRepo, anomalyRepo, workflows, mapper, properties, projection);
         CorrelationService correlation = new CorrelationService(
                 sagas, eventRepo, detector, new DeduplicationCache(), workflows, mapper);
-        // The repository's own failure-signal declarations, not a copy in test resources:
-        // F4 moved R01's wording out of the code into these files, so a replay that read a
-        // different copy would stop measuring what production does.
+
         FailureSignalRegistry failureSignals =
                 new FailureSignalRegistry(repoRoot().resolve("declarations").toString());
         failureSignals.load();
@@ -184,7 +172,7 @@ class Sc06ReplayTest {
         row.set("rca_primary_roots", mapper.valueToTree(result.getPrimaryRootCauses()));
         row.set("rca_candidates", mapper.valueToTree(result.getCandidates()));
         row.set("anomalies_actual", mapper.valueToTree(anomalies.stream().map(a -> a.getAnomalyType().name()).toList()));
-        // Historical SC06 oracle, unchanged: only the published label counts.
+
         row.put("rca_accurate", "CIRCUIT_BREAKER_OPEN".equals(result.getRootCause()));
         return row;
     }

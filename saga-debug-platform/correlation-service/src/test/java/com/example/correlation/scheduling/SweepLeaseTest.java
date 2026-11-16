@@ -22,18 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
-/**
- * Exercises the lease against a real database rather than a mock, because everything it
- * claims is a claim about what the database does with two concurrent statements. A mock
- * would only prove that the class calls the methods this test was written to expect.
- *
- * <p>H2 in PostgreSQL mode, which is what the rest of this suite runs on. The one
- * Postgres-specific thing the lease relies on — {@code EXTRACT(EPOCH FROM ...)} — is
- * exercised here for real; a build where it stops working fails these tests rather than
- * silently taking a different branch in production.
- */
 class SweepLeaseTest {
-
     private static final String SWEEP = "detect-stuck-sagas";
 
     private DataSource dataSource;
@@ -85,7 +74,6 @@ class SweepLeaseTest {
         AtomicInteger ranOnB = new AtomicInteger();
         CountDownLatch bTried = new CountDownLatch(1);
 
-        // B asks from inside A's sweep, which is the only moment A genuinely holds it.
         boolean grantedToA = leaseHeldBy("instance-a").runExclusively(SWEEP, Duration.ofMinutes(2), () -> {
             boolean grantedToB = leaseHeldBy("instance-b")
                     .runExclusively(SWEEP, Duration.ofMinutes(2), ranOnB::incrementAndGet);
@@ -112,7 +100,7 @@ class SweepLeaseTest {
                         startTogether.await();
                         return leaseHeldBy("instance-" + i).runExclusively(SWEEP, Duration.ofMinutes(2), () -> {
                             runs.incrementAndGet();
-                            sleepBriefly();   // hold it long enough for the losers to ask
+                            sleepBriefly();
                         });
                     }))
                     .toList();
@@ -144,7 +132,7 @@ class SweepLeaseTest {
     @DisplayName("a holder that dies mid-sweep blocks the others only until its lease expires")
     void anExpiredLeaseIsTakenOver() {
         AtomicInteger ran = new AtomicInteger();
-        // A crashed holder is a row that was never released: written, then nothing.
+
         jdbc.update("""
                 INSERT INTO scheduler_lease (sweep, holder, token, taken_at, lease_expires_at)
                 VALUES (?, 'instance-gone', 'token-gone', CURRENT_TIMESTAMP,
@@ -178,8 +166,6 @@ class SweepLeaseTest {
     @Test
     @DisplayName("a sweep that overran does not free the lease its successor now holds")
     void releaseOnlyFreesItsOwnAcquisition() {
-        // A takes the lease and, while it is still inside its sweep, the row is taken
-        // over by B -- which is what an overrun past the lease looks like from A's side.
         AtomicInteger bHolds = new AtomicInteger();
         leaseHeldBy("instance-a").runExclusively(SWEEP, Duration.ofMinutes(2), () -> {
             jdbc.update("""
@@ -192,7 +178,7 @@ class SweepLeaseTest {
         });
 
         assertThat(bHolds).hasValue(1);
-        // A's release ran on the way out and must have left B's lease alone.
+
         Long expiresAt = jdbc.queryForObject(
                 "SELECT lease_expires_at - CAST(EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) AS BIGINT)"
                         + " FROM scheduler_lease WHERE sweep = ?", Long.class, SWEEP);
@@ -212,7 +198,6 @@ class SweepLeaseTest {
                 throw new IllegalStateException("detector blew up");
             });
         } catch (IllegalStateException expected) {
-            // The lease does not swallow failures; the sweep's own logging owns that.
         }
 
         assertThat(leaseHeldBy("instance-b")
@@ -243,7 +228,7 @@ class SweepLeaseTest {
             Long remaining = jdbc.queryForObject(
                     "SELECT lease_expires_at - CAST(EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) AS BIGINT)"
                             + " FROM scheduler_lease WHERE sweep = ?", Long.class, "purge-expired-sagas");
-            // Ten minutes as the database counts them, whatever this JVM thinks the time is.
+
             assertThat(remaining).isBetween(590L, 600L);
         });
     }

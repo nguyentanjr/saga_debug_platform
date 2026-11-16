@@ -28,30 +28,9 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 
-/**
- * Follows the Docker Engine event stream and records when the observed system's services
- * exit and start.
- *
- * <p>Read-only towards the observed system: it asks the runtime what happened and changes
- * nothing, and no service has to emit anything new. Off unless
- * {@code correlation.liveness.docker.enabled} is set.
- *
- * <h2>Observer boundary (ADR 0001)</h2>
- * The engine API can stop, start and delete containers, and a socket mounted read-only still
- * serves all of it. So the intended deployment does not give this service the socket: it
- * talks to a socket proxy that forwards {@code GET /events} and refuses everything else
- * ({@code tcp://...} endpoint). The observer then cannot act on the observed system even if
- * this code were wrong. A {@code unix://} endpoint is accepted for local development only.
- *
- * <p>The request is plain HTTP/1.0 so the engine streams the response as newline-separated
- * JSON until the connection closes; the parser only reads lines that look like JSON objects,
- * so a chunked response would parse too. On reconnect it asks for events since the last one
- * recorded, and duplicates are dropped by {@code (source, external_id)}.
- */
 @Component
 @ConditionalOnProperty(prefix = "correlation.liveness.docker", name = "enabled", havingValue = "true")
 public class DockerLifecycleCollector {
-
     private static final Logger log = LoggerFactory.getLogger(DockerLifecycleCollector.class);
     private static final String FILTERS =
             "{\"type\":[\"container\"],\"event\":[\"die\",\"start\"]}";
@@ -95,7 +74,6 @@ public class DockerLifecycleCollector {
         }
     }
 
-    /** One connection: replays from the last recorded report, then follows until the stream ends. */
     void follow() throws Exception {
         long since = repository.findTopBySourceOrderByOccurredAtDesc(DockerEventParser.SOURCE)
                 .map(e -> e.getOccurredAt().getEpochSecond())
@@ -145,7 +123,6 @@ public class DockerLifecycleCollector {
             log.info("Service {} {} at {} ({})", event.getServiceName(), event.getState(),
                     event.getOccurredAt(), event.getDetail());
         } catch (DataIntegrityViolationException duplicate) {
-            // Recorded concurrently by a replay; the unique key already holds it.
         }
     }
 }

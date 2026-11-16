@@ -40,31 +40,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/**
- * Telling this platform's re-reading apart from the observed system's re-sending.
- *
- * <h2>What went wrong before</h2>
- * The duplicate detector sat behind a database lookup that only runs when the in-memory
- * deduplication cache misses — and that cache misses exactly when the observer restarts or
- * its consumer offsets are reset. So it fired on the one occasion nothing had happened in
- * the observed system, and stayed silent on the occasion something had: a genuine
- * duplicate arriving inside a single run hit the cache and was skipped without a word.
- *
- * <p>Validation against three unrelated saga systems showed the consequence. Resetting the
- * offsets to re-read a topic produced EXACT_DUPLICATE_EVENT against every execution on it,
- * citing real outbox ids, and once RCA promotion landed those findings were promoted:
- * three of four sagas reported {@code DUPLICATE_DELIVERY (R13)} as their root cause, for a
- * replay the observer had performed on itself.
- *
- * <p>What separates the two cases is which record on the transport each observation came
- * in on. Kafka names one by topic-partition-offset; the consumer already computed it and
- * then dropped it. Re-reading presents the same record again; a source that published an
- * event twice produced two. That is now recorded with the event and compared — not
- * inferred from timing, and not from the payload looking familiar.
- */
 class ObserverReplayTest {
-
-    /** No source has declared how it words failures -- what R01/R23 see when untold. */
     private static final FailureSignalRegistry EMPTY_FAILURE_SIGNALS =
             new FailureSignalRegistry("");
 
@@ -116,12 +92,6 @@ class ObserverReplayTest {
                 new DeduplicationCache(), registry, new ObjectMapper());
     }
 
-    // ══ the distinction itself ════════════════════════════════════════════════
-
-    /**
-     * The headline. The same record read a second time — an offset reset, a restart, a
-     * reprocess — is this platform reading, not the source sending.
-     */
     @Test
     void aReReadOfTheSameRecordIsNotReportedAgainstTheSource() {
         correlationService.processEvent(observation("e1", "ORDER_CREATED", "orders-0-17"));
@@ -133,10 +103,6 @@ class ObserverReplayTest {
                 .detectDuplicateEvent(anyString(), anyString(), anyString());
     }
 
-    /**
-     * And the case the detector exists for is untouched: one event id, two records, which
-     * only a source that published it twice can produce.
-     */
     @Test
     void aGenuineSourceDuplicateIsStillReported() {
         correlationService.processEvent(observation("e1", "ORDER_CREATED", "orders-0-17"));
@@ -146,10 +112,6 @@ class ObserverReplayTest {
                 RUN.canonical(), "e1", "ORDER_CREATED", "orders-0-17", "orders-0-42");
     }
 
-    /**
-     * A replay stores nothing a second time. That was already true and is the reason the
-     * finding was wrong rather than harmful: dedup was working, only its explanation was.
-     */
     @Test
     void aReplayDoesNotStoreTheEventTwice() {
         correlationService.processEvent(observation("e1", "ORDER_CREATED", "orders-0-17"));
@@ -157,14 +119,12 @@ class ObserverReplayTest {
 
         List<SagaEvent> afterFirstPass = List.copyOf(events);
 
-        // The whole run re-read, every record at the position it already occupied.
         correlationService.processEvent(observation("e1", "ORDER_CREATED", "orders-0-17"));
         correlationService.processEvent(observation("e2", "PAYMENT_COMPLETED", "payments-0-3"));
 
         assertThat(events).hasSize(2).containsExactlyElementsOf(afterFirstPass);
     }
 
-    /** The stored event remembers which record established it, which is what makes the above work. */
     @Test
     void theRecordThatCarriedAnEventIsStoredWithIt() {
         correlationService.processEvent(observation("e1", "ORDER_CREATED", "orders-0-17"));
@@ -173,12 +133,6 @@ class ObserverReplayTest {
                 .extracting(SagaEvent::getTransportRef).isEqualTo("orders-0-17");
     }
 
-    /**
-     * A transport that names no record leaves the platform unable to tell the two apart,
-     * and it says so by keeping its previous behaviour rather than assuming replay. HTTP
-     * ingestion is the real instance: a second POST of one event id genuinely is a second
-     * delivery, and there is no offset for it to have been re-read from.
-     */
     @Test
     void anObservationWithNoTransportIdentityKeepsItsPreviousMeaning() {
         correlationService.processEvent(observation("e1", "ORDER_CREATED", null));
@@ -188,7 +142,6 @@ class ObserverReplayTest {
                 RUN.canonical(), "e1", "ORDER_CREATED", null, null);
     }
 
-    /** Nor is a half-known pair treated as a match: one reference is not two. */
     @Test
     void aStoredEventWithNoRecordIsNotAssumedToBeTheSameRecord() {
         correlationService.processEvent(observation("e1", "ORDER_CREATED", null));
@@ -198,12 +151,6 @@ class ObserverReplayTest {
                 RUN.canonical(), "e1", "ORDER_CREATED", null, "orders-0-17");
     }
 
-    // ══ the fast path in front of it ══════════════════════════════════════════
-
-    /**
-     * The deduplication cache still short-circuits a redelivery of the same record without
-     * a database round trip, which is the whole reason it exists.
-     */
     @Test
     void theCacheStillSkipsARedeliveryOfTheSameRecord() {
         DeduplicationCache cache = new DeduplicationCache();
@@ -213,12 +160,6 @@ class ObserverReplayTest {
         assertThat(cache.seenOnDifferentRecord("shop::e1", "orders-0-17")).isFalse();
     }
 
-    /**
-     * But it no longer swallows a second record silently. This is the case that used to
-     * disappear: a source publishing one event twice inside a single observer run never
-     * reached the database lookup, so the genuine duplicate went unreported while the
-     * observer's own re-reads were reported instead.
-     */
     @Test
     void theCacheNoLongerSwallowsASecondRecordCarryingTheSameEvent() {
         DeduplicationCache cache = new DeduplicationCache();
@@ -227,7 +168,6 @@ class ObserverReplayTest {
         assertThat(cache.seenOnDifferentRecord("shop::e1", "orders-0-42")).isTrue();
     }
 
-    /** An entry recorded without a record cannot claim two records differ. */
     @Test
     void theCacheDoesNotClaimADifferenceItCannotSee() {
         DeduplicationCache cache = new DeduplicationCache();
@@ -238,13 +178,6 @@ class ObserverReplayTest {
         assertThat(cache.seenOnDifferentRecord("shop::e1", null)).isFalse();
     }
 
-    // ══ what reaches RCA ══════════════════════════════════════════════════════
-
-    /**
-     * The consequence F2 was reported for. A replayed run raises no duplicate finding, so
-     * there is no R13 candidate for promotion to pick up, and RCA reports what the
-     * execution actually shows instead of a duplicate the observer caused.
-     */
     @Test
     void aReplayLeavesRcaWithNoDuplicateCauseToPromote() {
         RcaResult result = analyseWith(standingAnomalies());
@@ -255,11 +188,6 @@ class ObserverReplayTest {
                 .noneSatisfy(candidate -> assertThat(candidate.getRuleId()).isEqualTo("R13"));
     }
 
-    /**
-     * And a genuine duplicate still reaches RCA and is still promotable, so this fix
-     * removed a false finding rather than the rule that reports the true one. R13 is not
-     * hidden, down-ranked or reclassified — it is simply not raised for a replay.
-     */
     @Test
     void aGenuineDuplicateStillReachesRcaAndIsPromotable() {
         RcaResult result = analyseWith(standingAnomalies(AnomalyType.EXACT_DUPLICATE_EVENT));
@@ -268,11 +196,6 @@ class ObserverReplayTest {
         assertThat(result.getRuleId()).isEqualTo("R13");
     }
 
-    /**
-     * Retraction still governs what RCA may reason from. A withdrawn duplicate finding is
-     * invisible to the analysis exactly as any other withdrawn finding is — this change
-     * did not add a second route into RCA that bypasses it.
-     */
     @Test
     void aWithdrawnDuplicateFindingStaysOutOfTheDiagnosis() {
         Anomaly withdrawn = anomaly(AnomalyType.EXACT_DUPLICATE_EVENT);
@@ -284,8 +207,6 @@ class ObserverReplayTest {
         assertThat(result.getRootCause()).isNull();
         assertThat(result.getRuleId()).isNull();
     }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private IngestedEvent observation(String eventId, String eventType, String transportRef) {
         return new IngestedEvent(
@@ -312,10 +233,6 @@ class ObserverReplayTest {
         return anomaly;
     }
 
-    /**
-     * Runs the real RCA pipeline — the shipped rule registry, the real selector and the
-     * promotion added for F1 — over the findings a run is left with.
-     */
     private RcaResult analyseWith(List<Anomaly> standing) {
         SagaInstance saga = new SagaInstance();
         saga.setSagaId(RUN.canonical());

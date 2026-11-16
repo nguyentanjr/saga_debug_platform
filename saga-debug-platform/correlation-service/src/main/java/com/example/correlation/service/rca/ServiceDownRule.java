@@ -27,43 +27,11 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * R25 — the run waited on a step longer than the step allows, and the container runtime
- * reported that the service owning that step was down during that wait.
- *
- * <h2>Why a separate source of evidence</h2>
- * A stopped service emits nothing, so from the saga's events a crash, a slow consumer and a
- * partitioned network are the same silence. R05 and R06 say exactly that and stop there:
- * R05 names SERVICE_CRASH only as a hypothesis, R06 only says the run went quiet and later
- * ended. What settles it is a fact from outside the events — the runtime saying the
- * process exited — which {@link ServiceLifecycleEvent} records. With it, the claim is no
- * longer inferred from absence.
- *
- * <h2>The two conditions, and why both</h2>
- * <ol>
- *   <li><b>A wait.</b> Between two consecutive observations of the run (or since the last
- *       one, while it has not ended) more time passed than the awaited step's declared
- *       timeout. Without this, any restart of a service would be blamed on every run that
- *       happened to be in flight.</li>
- *   <li><b>A down interval of that step's service overlapping the wait.</b> The service is
- *       the one the workflow declares for the step; the interval runs from a reported exit
- *       to the next reported start, or is still open. Without this, it is R05's silence
- *       again.</li>
- * </ol>
- *
- * <h2>Symptoms of the same wait</h2>
- * The step timeout (R07) and the silence-then-ending (R06) are true and are what the wait
- * looked like from the events. Once the cause of that wait is established they are its
- * consequences, not competing causes, so {@link #explainSymptoms} moves them to
- * SUPPORTING_EVIDENCE with the reason. They stay in the result with their evidence.
- */
 @Component
-// false = the events-only observer: R25 is not assessed at all, whatever the table holds.
-// The measured ablation; turning off only the collector would leave older facts readable.
+
 @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
         prefix = "correlation.liveness", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class ServiceDownRule {
-
     public static final String RULE_ID = "R25";
     public static final String ROOT_CAUSE = "SERVICE_CRASH";
 
@@ -79,14 +47,12 @@ public class ServiceDownRule {
         this.lookback = lookback;
     }
 
-    /** A stretch of the run spent waiting on one step for longer than the step allows. */
     public record Wait(String stepId, String service, Instant from, Instant to,
             int timeoutSeconds, String closingEventId, String closingEventType) {
         boolean isOpen() { return closingEventId == null; }
         long seconds() { return Duration.between(from, to).getSeconds(); }
     }
 
-    /** What the rule concluded, with the wait it explained. */
     public record Finding(CandidateAssessment candidate, Wait explainedWait) {}
 
     public Optional<Finding> assess(SagaInstance saga, List<SagaEvent> events,
@@ -103,15 +69,6 @@ public class ServiceDownRule {
         return assess(saga, waits, readable(lifecycle, workflow.getRuntimeScope()));
     }
 
-    /**
-     * The facts that can be attributed to this workflow's services (V21).
-     *
-     * <p>With a declared {@code runtimeScope}, only that deployment's facts. Without one, a
-     * service name is usable only while a single scope reports it: when two deployments both
-     * report a {@code payment-service}, neither restart can be pinned on this run, and the
-     * rule makes no claim rather than picking one — as execution keys refuse an ambiguous raw
-     * id (ADR 0002).
-     */
     public static List<ServiceLifecycleEvent> readable(List<ServiceLifecycleEvent> lifecycle, String runtimeScope) {
         if (runtimeScope != null && !runtimeScope.isBlank()) {
             return lifecycle.stream().filter(e -> runtimeScope.equals(e.getScope())).toList();
@@ -124,19 +81,9 @@ public class ServiceDownRule {
                 .toList();
     }
 
-    /**
-     * Every wait in the run that exceeded its step's timeout, earliest first.
-     *
-     * <p>Measured on the platform's clock (receivedAt), as R05 measures silence (F15): the
-     * runtime's event times come from the same host, and a source's own timestamps may lag.
-     */
     static List<Wait> waits(SagaInstance saga, List<SagaEvent> events, WorkflowSpec workflow, Instant now) {
         if (workflow == null || events == null || events.isEmpty()) return List.of();
-        // Business order decides which step a silence belongs to (I9): events of one run
-        // travel on several topics and are read in whatever order the partitions deliver,
-        // so the event read just before a silence need not be the one that preceded it.
-        // The silence itself is still measured on the platform's clock, from the last
-        // moment anything about the run had been heard.
+
         List<SagaEvent> heard = EvidenceTimeline.of(workflow, events.stream()
                         .filter(e -> heardAt(e) != null).toList())
                 .inBusinessOrder();
@@ -184,19 +131,6 @@ public class ServiceDownRule {
         return waits;
     }
 
-    /**
-     * The step(s) the run was waiting on between two observations: those awaited after the
-     * earlier one (EXT-R25-MISS-KITCHEN), the same reading the open wait below and the stuck
-     * timeout (EXT-STUCK-TIMEOUT) use. The closing event's own step is the answer only when
-     * the earlier event says nothing about what comes next — it belongs to no step, or ends a
-     * branch — which is how every wait was read before.
-     *
-     * <p>Charging the wait to the closing event's step was right whenever each step publishes
-     * its own completion: the reply that ends the wait belongs to the awaited step. A source
-     * that does not — an orchestrator seen through its commands, an untranslated completion —
-     * ends the wait with a later step's event, and the service that held the run up went
-     * unnamed.
-     */
     private static List<String> awaitedBetween(WorkflowSpec workflow, SagaEvent previous, SagaEvent current) {
         List<String> awaited = workflow.stepsAwaitedAfter(previous.getEventType());
         if (!awaited.isEmpty()) return awaited;
@@ -206,11 +140,6 @@ public class ServiceDownRule {
                 .orElse(List.of());
     }
 
-    /**
-     * The first wait some down interval of its service overlaps, preferring an interval the
-     * runtime reported (PROCESS) over one a probe inferred (PROBE): the first settles that the
-     * process was gone, the second only that it could not be reached.
-     */
     static Optional<Finding> assess(SagaInstance saga, List<Wait> waits,
             List<ServiceLifecycleEvent> lifecycle) {
         Map<String, List<DownInterval>> downByService = downIntervals(lifecycle);
@@ -235,11 +164,6 @@ public class ServiceDownRule {
         }
     }
 
-    /**
-     * Exit-to-start intervals per service. A start with no exit before it in the window
-     * opens nothing: the service may have been down before the window, but that was not
-     * observed, and an interval with an invented beginning is not evidence.
-     */
     private static Map<String, List<DownInterval>> downIntervals(List<ServiceLifecycleEvent> lifecycle) {
         Map<String, List<DownInterval>> result = new HashMap<>();
         Map<String, ServiceLifecycleEvent> openExit = new HashMap<>();
@@ -298,8 +222,6 @@ public class ServiceDownRule {
 
         c.setAnchorStepId(wait.stepId());
         if (exit.getBasis() == ServiceLifecycleEvent.Basis.PROBE) {
-            // A probe that could not reach the service is also what a partition looks like,
-            // so this corroborates a crash without settling it.
             c.setStatus(CandidateStatus.SUPPORTING_EVIDENCE);
             c.setStatusReason(wait.service() + " could not be reached by a probe while the run was "
                     + "waiting on " + wait.stepId() + "; a probe cannot tell a stopped process "
@@ -315,17 +237,8 @@ public class ServiceDownRule {
         return c;
     }
 
-    /**
-     * Moves the findings that only describe this wait from competing cause to consequence.
-     *
-     * <p>Two, and only when they are about this wait: a step timeout (R07) whose cited
-     * STEP_TIMEOUT is for the same step, and the silence-then-ending (R06) when every
-     * SAGA_STUCK on the run was raised inside the wait. Anything else — another step's
-     * timeout, a failure the run reported itself — is left as it was.
-     */
     public static void explainSymptoms(List<CandidateAssessment> candidates, List<Anomaly> anomalies,
             Finding finding) {
-        // Only an established cause turns other findings into its consequences.
         if (finding.candidate().getStatus() != CandidateStatus.STRONG_EVIDENCE) return;
         Wait wait = finding.explainedWait();
         Map<Long, Anomaly> byId = new HashMap<>();

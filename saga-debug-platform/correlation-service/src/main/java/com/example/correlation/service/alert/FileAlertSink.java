@@ -15,7 +15,6 @@ import java.nio.file.StandardOpenOption;
 
 @Component
 public class FileAlertSink implements AlertSink {
-
     private static final Logger log = LoggerFactory.getLogger(FileAlertSink.class);
 
     private final ObjectMapper objectMapper;

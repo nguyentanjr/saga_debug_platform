@@ -11,21 +11,8 @@ import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.boot.actuate.health.Status;
 import org.springframework.stereotype.Component;
 
-/**
- * Whether ingestion is keeping up with what the observed systems publish (L2).
- *
- * <p>Every conclusion the observer draws is about the events it has read. When it falls
- * behind — a slow database, or holding a partition through a store outage (L1) — a run can
- * look stuck or incomplete only because its later events are still queued, and nothing
- * said so. The backlog is exposed as a gauge for whatever monitoring the deployment runs,
- * and as a health component that reports {@code LAGGING} past a configured threshold.
- *
- * <p>{@code LAGGING} does not take the service down: a backlog is a reason to distrust
- * fresh findings, not to stop reading, which is the only thing that would clear it.
- */
 @Component("ingestionBacklog")
 public class IngestionBacklogHealth implements HealthIndicator {
-
     static final Status LAGGING = new Status("LAGGING",
             "Ingestion is behind; recent findings may reflect events not yet read");
 

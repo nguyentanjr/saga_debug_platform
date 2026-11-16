@@ -15,12 +15,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * EWALLET_CORE_PAYMENT against the sequences staging produced on 2026-11-02: a betting success,
- * a hold the source refused, and a partner timeout still being inquired about.
- */
 class EwalletCorePaymentDeclarationTest {
-
     private static final ExecutionKey RUN = ExecutionKey.of("ewallet-core-payment", "P-1");
     private static final String REPLIES = "PMT.EVENT-BACKBONE.REPLY-WALLET3-V2-STAGING";
 
@@ -142,7 +137,6 @@ class EwalletCorePaymentDeclarationTest {
                 .contains("TRANSACTION_WAIT_AUDIT");
     }
 
-    /** Staging 6307539372730592: one failed payment, its result published three times. */
     @Test
     void aResultRepublishedAsItsRevertMovesIsNoActivityAfterTheEnding() throws Exception {
         ReplayPipeline p = deliver(0, "HOLD_STARTED", "HOLD_SUCCEEDED", "PARTNER_STARTED", "PARTNER_FAILED");
@@ -164,7 +158,6 @@ class EwalletCorePaymentDeclarationTest {
         assertThat(standing(p)).isEmpty();
     }
 
-    /** Staging 6263399800211511: the payment failed, then reconciliation collected it as a new transaction. */
     @Test
     void aReconciliationTransactionIsNoSecondOutcome() throws Exception {
         ReplayPipeline p = deliver(0);
@@ -175,7 +168,6 @@ class EwalletCorePaymentDeclarationTest {
         assertThat(standing(p)).isEmpty();
     }
 
-    /** Staging 1793611073159: a run left in audit is one silence, not one per republish. */
     @Test
     void anAuditResultDoesNotRestartTheSilenceClock() {
         ReplayPipeline p = deliver(16 * 60, "AUTHORIZE_STARTED", "AUTHORIZE_SUCCEEDED", "HOLD_STARTED", "HOLD_SUCCEEDED",
@@ -188,7 +180,6 @@ class EwalletCorePaymentDeclarationTest {
         assertThat(p.anomalies).filteredOn(a -> a.getAnomalyType() == AnomalyType.SAGA_STUCK).hasSize(1);
     }
 
-    /** 1793611073159 was reported "nothing heard since" its partner call while inquiries kept arriving. */
     @Test
     void aStuckFindingSaysHowManyRepeatsItIgnored() {
         ReplayPipeline p = deliver(16 * 60, "AUTHORIZE_STARTED", "AUTHORIZE_SUCCEEDED", "HOLD_STARTED", "HOLD_SUCCEEDED",

@@ -23,15 +23,6 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * EXT-OVERLOAD-FALSE-FINDINGS: an analysis must not read a finding an ingest is withdrawing.
- *
- * <p>Bench 2000 ev/s (856447a): 10 runs kept WRONG_SAGA_CORRELATION_KEY for good. Ingest only
- * version-checked the run row, so RCA -- which locks it -- read ORPHAN_EVENT as standing while
- * the ingest that withdrew it had not committed, then stamped its diagnosis after the
- * withdrawal; the stale-diagnosis sweep saw nothing newer. Ingest now takes the same lock.
- * Real transactions, because the defect is what one transaction cannot yet see of another.
- */
 @DataJpaTest(showSql = false, properties = {
         "spring.datasource.url=jdbc:h2:mem:ingestrca;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;LOCK_TIMEOUT=10000",
         "spring.datasource.driver-class-name=org.h2.Driver",
@@ -44,7 +35,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class IngestRcaLockTest {
-
     @Autowired private SagaInstanceRepository sagas;
     @Autowired private AnomalyRepository anomalies;
     @Autowired private PlatformTransactionManager transactionManager;

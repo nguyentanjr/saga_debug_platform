@@ -21,15 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-/**
- * Evaluation replay: runs whose Kafka records are past
- * retention, replayed from the old observer's stored payloads through the current mappings, the
- * real alias resolver and the real correlation and detectors. Mirrors EventIngestionService
- * lines 168-190. Received time is the event's own time, as when it was read live.
- */
 class BackfillReplayTest {
-
-    /** Staging 2026-11-02..04: the 24 transfer runs whose records Kafka had already dropped. */
     @Test
     void theTransferRunsPastRetentionReadAsReported() throws Exception {
         ObjectMapper om = new ObjectMapper();
@@ -99,7 +91,7 @@ class BackfillReplayTest {
         });
         Map<String, Long> byOutcome = new TreeMap<>();
         out.forEach(r -> byOutcome.merge(r.get("workflowType") + " " + r.get("status") + " " + r.get("anomalies"), 1L, Long::sum));
-        // eval-20261111: 13 + 4 + 2 settled, 5 transfers between wallets no workflow declares.
+
         assertThat(byOutcome).containsExactly(
                 Map.entry("EWALLET_W2N_TRANSFER COMPENSATED []", 13L),
                 Map.entry("EWALLET_W2N_TRANSFER COMPLETED []", 4L),

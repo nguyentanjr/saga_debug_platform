@@ -25,13 +25,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * The engine stream ends whenever Docker restarts (observed on 2026-10-03: the whole engine
- * restarted under a running evaluation). Each reconnect asks for events since the last one
- * recorded, so nothing in between is lost, and the replayed overlap is not stored twice.
- */
 class DockerLifecycleCollectorTest {
-
     private final List<ServiceLifecycleEvent> stored = new ArrayList<>();
     private final Deque<Object> connections = new ArrayDeque<>();
     private final List<String> requests = new ArrayList<>();
@@ -71,8 +65,7 @@ class DockerLifecycleCollectorTest {
     @Test
     void aReconnectResumesFromTheLastReportWithoutLosingOrDuplicating() throws Exception {
         connections.add(stream(die("inventory-service", 1_790_000_100L)));
-        // The engine restarted; the new stream replays the exit (since is whole seconds) and
-        // then carries the start that happened while we were disconnected.
+
         connections.add(stream(die("inventory-service", 1_790_000_100L), start("inventory-service", 1_790_000_160L)));
 
         collector.follow();

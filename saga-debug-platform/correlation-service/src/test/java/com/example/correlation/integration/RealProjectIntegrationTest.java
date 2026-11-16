@@ -18,24 +18,7 @@ import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Integration with systems this project did not write.
- *
- * <p>Runs captured from four unmodified open-source saga implementations (retest 2026-10-11:
- * semotpan hotel 16d4f67, sylleryum KMS b474ba3, uuhnaut69 SPM 41da497, Eventuate e7ec5b7),
- * each judged with the declarations shipped in {@code declarations/}. The expected outcome of
- * every run is what the source system itself persisted, or the plan written before the fault
- * was injected -- never what the observer said (tools/build_integration_fixtures.py).
- *
- * <p>Each run is delivered in four orders, because an observer reading Kafka does not get to
- * choose. Checked: the reconstructed status matches the source; the findings left standing do
- * not depend on the order (OUT_OF_ORDER excepted, which is about the order); a run the
- * source settled normally carries no structural finding that would blame it; and a defect the
- * source is shown by its own state to have committed is reported.
- */
 class RealProjectIntegrationTest {
-
-    /** Claims that, standing on a run the source settled normally, blame it for something it did not do. */
     private static final Set<AnomalyType> STRUCTURAL = EnumSet.of(
             AnomalyType.FORBIDDEN_POST_TERMINAL, AnomalyType.STATE_REGRESSION,
             AnomalyType.MULTI_TERMINAL_CONFLICT, AnomalyType.INVALID_TRANSITION,
@@ -70,8 +53,8 @@ class RealProjectIntegrationTest {
     @Test
     void everyCapturedRunIsReadAsItsSourceSettledIt() {
         List<String> failures = new ArrayList<>();
-        Map<String, int[]> perSystem = new TreeMap<>();   // system -> {runs, correct}
-        List<Map<String, Object>> observed = new ArrayList<>();   // forward order, for baselines
+        Map<String, int[]> perSystem = new TreeMap<>();
+        List<Map<String, Object>> observed = new ArrayList<>();
 
         for (JsonNode fixture : fixtures) {
             String name = fixture.get("fixture").asText();
@@ -126,10 +109,6 @@ class RealProjectIntegrationTest {
         assertThat(failures).isEmpty();
     }
 
-    /**
-     * What the observer concluded per run, for the external baseline to be compared against
-     * (tools/pm4py_real_baseline.py). Written to target/, never read back by a test.
-     */
     private static void writeObserved(List<Map<String, Object>> observed) {
         try {
             Path out = Path.of("target", "real-project-observer.json");

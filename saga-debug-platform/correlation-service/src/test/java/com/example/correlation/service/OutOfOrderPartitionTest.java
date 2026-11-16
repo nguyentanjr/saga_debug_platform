@@ -8,12 +8,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * OUT_OF_ORDER compares arrival with event time only where Kafka promises an order: one
- * topic-partition. Across partitions a reply read before its command is ordinary delivery.
- */
 class OutOfOrderPartitionTest {
-
     private static final Instant T0 = Instant.parse("2026-11-02T08:00:00Z");
     private static final ExecutionKey RUN = ExecutionKey.of(ExecutionKey.DEFAULT_SOURCE, "run-1");
 

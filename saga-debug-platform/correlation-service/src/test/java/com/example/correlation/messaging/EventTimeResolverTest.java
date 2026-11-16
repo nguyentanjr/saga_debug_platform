@@ -14,18 +14,12 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class EventTimeResolverTest {
-
     private static final Instant TRANSPORT = Instant.parse("2026-01-01T00:00:30Z");
     private static final Instant EVENT = Instant.parse("2026-01-01T00:00:00Z");
 
     private final EventTimeResolver resolver = new EventTimeResolver();
     private final ObjectMapper mapper = new ObjectMapper();
 
-    /**
-     * Pins the wire format actually produced by the serializer the services are
-     * configured with, so this resolver cannot drift away from what arrives on the
-     * topic without a test noticing.
-     */
     @Test
     void resolvesTheTimestampProducedByTheConfiguredSerializer() throws Exception {
         OrderCreatedEvent event = new OrderCreatedEvent();

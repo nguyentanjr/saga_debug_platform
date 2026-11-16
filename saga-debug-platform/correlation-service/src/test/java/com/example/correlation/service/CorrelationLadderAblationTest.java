@@ -26,22 +26,9 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * E3 (ROADMAP): ablation of the correlation ladder below DECLARED_KEY (ADR 0003).
- *
- * <p>Raw observations go through the real {@link EventIngestionService} -- source mapping,
- * the ladder, the alias resolver -- and then the real correlation, detectors and RCA of
- * {@link ReplayPipeline}. A rung is removed the way a system being onboarded would lack
- * it: the trace context is not propagated, or the mapping does not declare the second
- * identifier. No production switch.
- */
 class CorrelationLadderAblationTest {
-
     private static final Instant T0 = Instant.parse("2026-09-01T10:00:00Z");
 
-    // ══ A. PROPAGATED_CONTEXT ═════════════════════════════════════════════════
-
-    /** A system that shares no business id and propagates W3C trace context. */
     private static final String TRACE_ONLY = """
             name: trace-shop
             topicPattern: 'trace-shop\\.events'
@@ -71,18 +58,11 @@ class CorrelationLadderAblationTest {
         assertThat(o.sagaStatus).isEqualTo("COMPLETED");
         assertThat(o.rcaStatus).isEqualTo("NO_DIAGNOSIS_NEEDED");
 
-        // Without the rung the platform refuses rather than guesses: nothing is filed.
         assertThat(withoutTrace).allSatisfy(r ->
                 assertThat(r.outcome()).isEqualTo(IngestionResult.Outcome.NOT_CORRELATABLE));
         assertThat(ablated.pipeline.instances).isEmpty();
     }
 
-    // ══ B. ALIAS_LINK ═════════════════════════════════════════════════════════
-
-    /**
-     * Each service knows a different id: order and inventory key on the order number,
-     * payment on its own reference. Payment's event carries the order number too.
-     */
     private static final String ORDERS = """
             name: split-shop-orders
             system: split-shop
@@ -106,7 +86,6 @@ class CorrelationLadderAblationTest {
               eventTime: at
             """;
 
-    /** The same payment mapping with the second identifier left undeclared. */
     private static final String PAYMENTS_WITHOUT_ALIAS = """
             name: split-shop-payments
             system: split-shop
@@ -155,14 +134,6 @@ class CorrelationLadderAblationTest {
         return results;
     }
 
-    // ══ C. ALIAS_LINK arriving after both fragments exist: a fold ═════════════
-
-    /**
-     * Payment reports its start under its own reference only; the order number arrives on
-     * its completion. By then both halves are stored, so the link folds two executions.
-     * Three arms: fold with withdrawal (the platform), no alias declared, and fold with
-     * withdrawal disabled -- the last isolates what withdrawal contributes to a fold.
-     */
     @Test
     void aLateAliasFoldsTwoFragmentsAndWithdrawsWhatWasClaimedAgainstThem() {
         Arm control = new Arm(ORDERS, PAYMENTS_WITH_ALIAS);
@@ -212,9 +183,6 @@ class CorrelationLadderAblationTest {
         return results;
     }
 
-    // ══ D. the limit of PROPAGATED_CONTEXT: one trace, two executions ═════════
-
-    /** The same system with its business id declared. */
     private static final String TRACE_AND_KEY = """
             name: trace-shop
             topicPattern: 'trace-shop\\.events'
@@ -226,13 +194,6 @@ class CorrelationLadderAblationTest {
               traceId: traceparentTraceId
             """;
 
-    /**
-     * A trace is request-scoped (CorrelationBasis Javadoc): one request that starts two
-     * sagas puts both under one trace. With nothing but the trace to go on, the ladder files
-     * them as one execution -- the rung's known limit, measured rather than asserted. A
-     * declared key, when the source has one, takes precedence and keeps them apart. Both
-     * runs here start at the same instant, as two sagas started by one request would.
-     */
     @Test
     void oneTraceSpanningTwoRunsIsTheLimitOfTheTraceRung() {
         String trace = "0af7651916cd43dd8448eb211c80319c";
@@ -254,15 +215,10 @@ class CorrelationLadderAblationTest {
         assertThat(traceOnly.pipeline.instances).as("two runs filed as one").hasSize(1);
         ReplayPipeline.Outcome merged = traceOnly.pipeline.outcome(
                 traceOnly.pipeline.instances.keySet().iterator().next());
-        // Measured, not endorsed: the false merge surfaces only as an observation-process
-        // finding (the second run's events read "out of order"), which is never promoted,
-        // so the merged run is reported as a healthy completion. The rung's limit is
-        // nearly silent; only a declared key prevents it.
+
         assertThat(merged.anomalies).containsExactly("OUT_OF_ORDER");
         assertThat(merged.primary).isNull();
     }
-
-    // ══ harness ═══════════════════════════════════════════════════════════════
 
     private static List<String> healthyRun(String prefix, String traceId) {
         String[] types = {"ORDER_CREATED", "PAYMENT_COMPLETED", "INVENTORY_RESERVED"};

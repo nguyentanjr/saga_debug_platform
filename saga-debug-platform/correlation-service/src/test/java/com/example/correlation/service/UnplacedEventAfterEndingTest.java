@@ -11,15 +11,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * EXT-UNMAPPED-POST-TERMINAL: an event the workflow cannot place does not contradict an ending.
- *
- * <p>Live ewallet W2N run (2026-10-15): the result topic republishes W2N_Holding_Success,
- * left unmapped on purpose, after UNHOLD_SUCCEEDED ended the run as COMPENSATED; it was
- * reported FORBIDDEN_POST_TERMINAL. A placed event after the ending is still reported.
- */
 class UnplacedEventAfterEndingTest {
-
     private static final ExecutionKey RUN = ExecutionKey.of("ewallet", "TX-2");
     private static final Instant T0 = Instant.parse("2026-10-15T09:00:00Z");
 

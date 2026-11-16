@@ -23,29 +23,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * The HTTP adapter: anything that can post JSON can be observed.
- *
- * <p>Kafka was the only way in, so a system publishing over AMQP, calling a webhook, or
- * shipping from a log agent could not be observed at all without first being put behind
- * a broker. This is the same ingestion path, reached over HTTP — the mapping named by
- * {@code source} decides how the body is read, exactly as a topic name does.
- *
- * <p>Accepts one event or an array of them. Per-event outcomes are reported individually
- * rather than failing the batch: one unreadable record among fifty should not cost the
- * caller the other forty-nine.
- *
- * <p>Authenticated (L5), unlike the read-only endpoints: an event posted here becomes
- * diagnostic evidence, so whoever can post can write the observer's conclusions. A caller
- * presents a bearer token; see {@link IngestAuthorization}.
- */
 @RestController
 @RequestMapping("/api/ingest")
 public class IngestController {
-
     private static final Logger log = LoggerFactory.getLogger(IngestController.class);
 
-    /** Bounds the work one request can ask for. */
     private static final int MAX_BATCH = 1000;
 
     private final EventIngestionService ingestionService;
@@ -59,24 +41,10 @@ public class IngestController {
         this.authorization = authorization;
     }
 
-    /**
-     * Proposes how to read a source, from a sample of its events.
-     *
-     * <p>Nothing is stored or applied. Writing a mapping by hand means reading someone
-     * else's payloads and working out which field is the identity, which the correlation
-     * key, which the clock — most of which is visible in the data. This does that reading
-     * and hands back a proposal with the evidence behind each choice.
-     *
-     * <p>Deliberately not automatic: a wrong guess at the correlation key merges unrelated
-     * executions or splits one into several, and neither surfaces as an error. It surfaces
-     * as a diagnosis that quietly makes no sense.
-     */
     @PostMapping("/{source}/infer")
     public ResponseEntity<Map<String, Object>> infer(@PathVariable("source") String source,
             @RequestBody JsonNode body,
             @RequestHeader(value = "Authorization", required = false) String authorization) {
-
-        // Stores nothing, but it reads and echoes back another system's payloads.
         ResponseEntity<Map<String, Object>> refused = this.authorization.refusal(authorization);
         if (refused != null) return refused;
 
@@ -100,36 +68,19 @@ public class IngestController {
         response.put("observedEventTypes", inferred.observedEventTypes());
         response.put("unresolved", inferred.unresolved());
         response.put("warnings", inferred.warnings());
-        // Dots in a source name are regex metacharacters; escaped so the proposed
-        // pattern matches the literal name it was derived from.
+
         response.put("proposedYaml",
                 inferred.toYaml(source, source.replace(".", "\\.")));
 
         return ResponseEntity.ok(response);
     }
 
-    /**
-     * The header carrying what a broker would call the record key.
-     *
-     * <p>HTTP has no key, and a mapping written as {@code executionId: key} is not a
-     * statement about Kafka — it says the correlation key travels beside the body rather
-     * than inside it, which is what the transactional outbox pattern does on every
-     * transport. Naming one conventional header lets the same mapping file be read over
-     * either transport, which is the whole promise of {@link RawObservation}.
-     */
     public static final String KEY_HEADER = "X-Observation-Key";
 
-    /**
-     * @param source  which mapping to read the body with; matched against the same
-     *                {@code topicPattern} that Kafka topics are
-     * @param headers the request's own headers, offered to the mapping exactly as a
-     *                broker's headers are
-     */
     @PostMapping("/{source}")
     public ResponseEntity<Map<String, Object>> ingest(@PathVariable("source") String source,
             @RequestBody JsonNode body,
             @RequestHeader Map<String, String> headers) {
-
         ResponseEntity<Map<String, Object>> refused = authorization.refusal(headerIgnoringCase(headers, "Authorization"));
         if (refused != null) return refused;
 
@@ -153,19 +104,10 @@ public class IngestController {
         int duplicates = 0;
         int rejected = 0;
 
-        // The transport envelope, which this adapter used to discard. A mapping reading
-        // its correlation key from the record key and its identity from a header — the
-        // ordinary shape of an outbox published by Debezium, and what the semotpan
-        // integration is built on — worked over Kafka and was rejected as
-        // NOT_CORRELATABLE over HTTP. Same mapping file, same events, different answer,
-        // and the rejection blamed the sending system for a gap in this adapter.
         Map<String, String> transportHeaders = normalise(headers);
         String key = transportHeaders.get(KEY_HEADER.toLowerCase(Locale.ROOT));
 
         for (JsonNode event : events) {
-            // No fallback identity: unlike a Kafka record, an HTTP body has no offset to
-            // fall back on, so an event without an id cannot be deduplicated and is
-            // rejected rather than being given a synthetic one that changes per request.
             IngestionResult result = ingestionService.ingest(new RawObservation(
                     source, event.toString(), receivedAt, null, key, transportHeaders));
 
@@ -191,27 +133,17 @@ public class IngestController {
         response.put("rejected", rejected);
         response.put("results", results);
 
-        // 202 when anything was stored, 400 when the caller sent nothing usable. A
-        // transient failure never reaches here: it propagates so the caller retries.
         return ResponseEntity
                 .status(accepted > 0 || duplicates > 0 ? HttpStatus.ACCEPTED : HttpStatus.BAD_REQUEST)
                 .body(response);
     }
 
-    /**
-     * Header names lowercased, because HTTP header names are case-insensitive and a
-     * mapping that says {@code header:id} must not depend on how a particular client
-     * capitalised it. Kafka's are case-sensitive, so this is the one place the two
-     * transports genuinely differ and it is handled here rather than in the mapping.
-     */
     static Map<String, String> normalise(Map<String, String> headers) {
         if (headers == null || headers.isEmpty()) {
             return Map.of();
         }
         Map<String, String> normalised = new LinkedHashMap<>();
         headers.forEach((name, value) -> {
-            // The credential is not part of the observation: offered to a mapping, it could
-            // be read into a stored field.
             if (name != null && value != null && !name.equalsIgnoreCase("Authorization")) {
                 normalised.put(name.toLowerCase(Locale.ROOT), value);
             }

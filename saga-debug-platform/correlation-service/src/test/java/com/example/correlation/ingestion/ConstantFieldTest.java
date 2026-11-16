@@ -9,13 +9,7 @@ import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * An outbox topic is published by exactly one service, but nothing on the record says
- * which: Debezium's EventRouter leaves a body like {"status":"BOOKED"}. Every event of the
- * hotel system was recorded as service "unknown" until a mapping could state it.
- */
 class ConstantFieldTest {
-
     private static SourceMapping mapping(String serviceName) throws Exception {
         return new ObjectMapper(new YAMLFactory()).readValue("""
                 name: hotel-replies

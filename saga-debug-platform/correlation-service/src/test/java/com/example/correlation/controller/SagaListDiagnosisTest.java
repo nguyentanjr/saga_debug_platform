@@ -30,12 +30,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * D1: the saga list says where each run broke, from the stored diagnosis, without the reader
- * opening the run.
- */
 class SagaListDiagnosisTest {
-
     private static final Instant T0 = Instant.parse("2026-01-01T00:00:00Z");
 
     @Test
@@ -49,7 +44,6 @@ class SagaListDiagnosisTest {
         assertThat(item.getRootCauseStep()).isEqualTo("RESERVE_INVENTORY");
     }
 
-    /** Same cause from another rule is a different candidate; its anchor is not borrowed. */
     @Test
     void theStepIsNeverTakenFromACandidateThatWasNotPromoted() {
         SagaListItem item = listOne(saga(), List.of(), rca("R11", "FORWARD_STEP_FAILURE", T0,
@@ -67,13 +61,11 @@ class SagaListDiagnosisTest {
         RcaResult newer = rca("R11", "FORWARD_STEP_FAILURE", T0.plusSeconds(60),
                 candidate("R11", "FORWARD_STEP_FAILURE", CandidateStatus.STRONG_EVIDENCE, "RESERVE_INVENTORY"));
 
-        // The repository returns newest first.
         SagaListItem item = listOne(saga(), List.of(), newer, older);
 
         assertThat(item.getRootCauseStep()).isEqualTo("RESERVE_INVENTORY");
     }
 
-    /** Withdrawn findings are claims the platform no longer stands behind (L25). */
     @Test
     void onlyStandingAnomaliesAreCounted() {
         Anomaly retracted = anomaly();
@@ -86,7 +78,6 @@ class SagaListDiagnosisTest {
         assertThat(item.getRootCause()).isNull();
     }
 
-    /** Under disputed workflows an earlier diagnosis is history, not the current one (F7). */
     @Test
     void aRunWithConflictingWorkflowsShowsNoCause() {
         SagaInstance saga = saga();

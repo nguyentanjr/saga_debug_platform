@@ -16,18 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
-/**
- * L14: a source declares which payload fields the observer must not keep.
- *
- * <p>Found on the live hotel run: TAKE_PAYMENT_REQUESTED and BOOK_ROOM_REQUESTED carry the
- * guest's {@code creditCardNo}, and the observer stored it verbatim in
- * {@code saga_events.payload} and served it from {@code /api/sagas/{id}}. What is sensitive
- * is a fact about the observed system, so it is declared per source (zero-touch: the source
- * changes nothing), and it is removed before storage, after every field the mapping reads
- * has been read — correlation is unaffected.
- */
 class RedactionTest {
-
     private static final ObjectMapper JSON = new ObjectMapper();
 
     @Test
@@ -50,7 +39,6 @@ class RedactionTest {
         assertThat(stored).doesNotContain("4111111111111111").doesNotContain("5500");
     }
 
-    /** Nothing declared, or nothing declared present: the payload is kept byte for byte. */
     @Test
     void aPayloadWithNothingToRedactIsKeptExactly() {
         String raw = "{\"sagaId\": \"S-1\",   \"amount\": 100.50}";
@@ -59,7 +47,6 @@ class RedactionTest {
         assertThat(parse("name: a\ntopicPattern: 'a'\nredact: [creditCardNo]\n").redact(raw)).isEqualTo(raw);
     }
 
-    /** A payload that is not JSON is not something this can reason about, and is kept. */
     @Test
     void aPayloadThatIsNotAnObjectIsKept() {
         SourceMapping mapping = parse("name: a\ntopicPattern: 'a'\nredact: [creditCardNo]\n");
@@ -68,7 +55,6 @@ class RedactionTest {
         assertThat(mapping.redact("[1,2]")).isEqualTo("[1,2]");
     }
 
-    /** The shipped hotel declarations, end to end: the card number never reaches storage. */
     @Test
     void theHotelCommandTopicsNeverStoreTheCardNumber() {
         CorrelationService correlation = mock(CorrelationService.class);
@@ -89,11 +75,6 @@ class RedactionTest {
         assertThat(ingested.sagaId()).isEqualTo("hotel-saga::SAGA-1");
     }
 
-    /**
-     * A payload that cannot be parsed cannot be redacted by path either, and the parser's
-     * own message used to quote it: Jackson 2.15 includes the source in error locations
-     * by default, and that message is both logged and returned as the rejection reason.
-     */
     @Test
     void anUnreadablePayloadIsNotQuotedInTheRejection() {
         EventIngestionService ingestion = new EventIngestionService(mock(CorrelationService.class), JSON,

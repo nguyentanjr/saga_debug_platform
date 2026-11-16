@@ -27,15 +27,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * F23: a run's MISSING_TERMINAL_EVENT threshold comes from its own workflow.
- *
- * <p>It was the slowest step across every loaded workflow, so a second system declaring a
- * 120s step moved ORDER_SAGA (slowest step 10s) from 100s to 1200s. Here ORDER_SAGA sits
- * beside such a workflow and is still held to 10s x 10.
- */
 class MissingTerminalThresholdTest {
-
     private final WorkflowSpec orderSaga = WorkflowSpecTestFixture.orderSaga();
     private final WorkflowSpec slowWorkflow = WorkflowSpecTestFixture.load("workflows/order-saga-workflow.yaml");
 
@@ -49,7 +41,6 @@ class MissingTerminalThresholdTest {
         assertThat(raised(Duration.ofSeconds(90))).isEmpty();
     }
 
-    /** The finding is never rewritten, so its count must say when it was taken (1793611073159: 18 of 40). */
     @Test
     void theEventCountIsStatedAsOfDetection() {
         raised(Duration.ofSeconds(150));

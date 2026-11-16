@@ -10,42 +10,21 @@ import java.io.Serializable;
 import java.time.Instant;
 import java.util.Objects;
 
-/**
- * One identifier that names an execution already known by another.
- *
- * <h2>Scoped to a source</h2>
- * The key is the pair {@code (sourceName, aliasKey)}, not the identifier alone. An alias
- * table keyed on the bare string is a cross-system merge waiting to happen: two observed
- * systems that both use {@code PAY-9} would resolve to each other's executions, and the
- * platform would fold two unrelated runs into one and then diagnose the result. Scoping
- * makes that impossible rather than unlikely.
- *
- * <h2>Written only from evidence</h2>
- * A row appears when an observation carried both identifiers at once, and
- * {@code linkedByEventId} records which one. No timing window, no similarity between
- * values, no shared business key — a wrong link would need a producer to have emitted a
- * wrong pair.
- */
 @Entity
 @Table(name = "execution_aliases")
 @IdClass(ExecutionAlias.Key.class)
 public class ExecutionAlias {
-
-    /** The namespace this alias belongs to; half of the primary key. */
     @Id
     @Column(name = "source_name")
     private String sourceName;
 
-    /** The identifier being resolved, as its source published it — a payment id, a booking reference. */
     @Id
     @Column(name = "alias_key")
     private String aliasKey;
 
-    /** The namespaced execution key every observation of this run is filed under. */
     @Column(name = "execution_id", nullable = false)
     private String executionId;
 
-    /** The observation that carried both identifiers, which is the evidence for this row. */
     @Column(name = "linked_by_event_id")
     private String linkedByEventId;
 
@@ -75,12 +54,10 @@ public class ExecutionAlias {
 
     public Instant getObservedAt() { return observedAt; }
 
-    /** The alias as an execution key in its own right. */
     public ExecutionKey key() {
         return ExecutionKey.of(sourceName, aliasKey);
     }
 
-    /** The composite primary key: an alias means nothing outside the source that used it. */
     public static class Key implements Serializable {
         private String sourceName;
         private String aliasKey;

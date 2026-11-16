@@ -13,14 +13,9 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 
-
-
-
-
 @RestController
 @RequestMapping("/api/admin")
 public class AdminEventController {
-
     private static final Logger log = LoggerFactory.getLogger(AdminEventController.class);
 
     private final CorrelationService correlationService;
@@ -35,10 +30,6 @@ public class AdminEventController {
         this.executionLookup = executionLookup;
         this.authorization = authorization;
     }
-
-    
-
-
 
     @PostMapping("/inject-event")
     public ResponseEntity<Map<String, String>> injectEvent(@RequestBody Map<String, String> body,
@@ -63,9 +54,6 @@ public class AdminEventController {
                 ? Instant.parse(timestampStr)
                 : Instant.now();
 
-        // Injected by hand, so it is namespaced under the default source like any
-        // observation that matched no mapping: an operator's test event must not be able
-        // to land inside a real system's execution.
         com.example.correlation.domain.ExecutionKey key = com.example.correlation.domain.ExecutionKey
                 .of(com.example.correlation.domain.ExecutionKey.DEFAULT_SOURCE, sagaId);
 
@@ -81,10 +69,6 @@ public class AdminEventController {
 
         log.info("Injected event: sagaId={}, eventType={}", sagaId, eventType);
 
-        // Both halves of what just happened. The caller asked under its own identifier
-        // and the observation was filed under a namespaced key; reporting only the former
-        // told a caller an id that addresses nothing, which is how the evaluation harness
-        // came to poll a run that existed the whole time.
         return ResponseEntity.ok(Map.of(
                 "status", "injected",
                 "sagaId", sagaId,
@@ -93,9 +77,6 @@ public class AdminEventController {
                 "eventType", eventType
         ));
     }
-
-    
-
 
     @PostMapping("/analyze/{sagaId}")
     public ResponseEntity<?> triggerRca(@PathVariable("sagaId") String sagaId) {

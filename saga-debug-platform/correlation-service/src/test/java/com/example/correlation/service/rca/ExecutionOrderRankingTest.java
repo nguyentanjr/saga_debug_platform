@@ -15,22 +15,12 @@ import java.util.OptionalInt;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Covers how candidates are ordered once more than one rule fires.
- *
- * <p>The previous comparator fell through from evidence tier to severity to a
- * lexicographic comparison of rule ids. When a slow step and a failing compensation both
- * produced HIGH candidates, "R07" beat "R10" because of the digit, and the evaluation
- * script read the first entry as the answer. Nothing about the failure influenced that.
- */
 class ExecutionOrderRankingTest {
-
     private static final Instant T0 = Instant.parse("2026-01-01T00:00:00Z");
 
     private final RcaSelector selector = new RcaSelector();
     private final WorkflowSpec spec = WorkflowSpecTestFixture.orderSaga();
 
-    /** Positions taken from the order saga's declared step sequence. */
     private final RcaSelector.ExecutionOrder order = new RcaSelector.ExecutionOrder() {
         private final List<String> steps =
                 List.of("CREATE_ORDER", "PROCESS_PAYMENT", "RESERVE_INVENTORY", "REFUND_PAYMENT");
@@ -72,7 +62,6 @@ class ExecutionOrderRankingTest {
         RcaSelector.SelectionResult result = selector.select(
                 List.of(earlyButWeak, lateButStrong), List.of(), saga(SagaStatus.FAILED), order);
 
-        // A weak hypothesis about an early step is still a weak hypothesis.
         assertThat(ruleIds(result)).containsExactly("R07", "R21");
     }
 
@@ -91,14 +80,11 @@ class ExecutionOrderRankingTest {
                 .contains("downstream of")
                 .contains("no causal link established");
 
-        // The upstream candidate has nothing before it and claims nothing.
         assertThat(find(result, "R02").getPrecededBy()).isEmpty();
     }
 
     @Test
     void stepsOnUnrelatedPathsAreNotCalledDownstreamOfEachOther() {
-        // REFUND_PAYMENT is a compensation step: reachable, but not on the SUCCESS path
-        // that leads into RESERVE_INVENTORY.
         CandidateAssessment compensation = anchored(
                 "R10", "COMPENSATION_STEP_FAILURE", "HIGH", "REFUND_PAYMENT", T0.plusSeconds(40));
         CandidateAssessment inventory = anchored(
@@ -131,8 +117,6 @@ class ExecutionOrderRankingTest {
         assertThat(ruleIds(selector.select(List.of(a, b), List.of(), saga(SagaStatus.FAILED), order)))
                 .isEqualTo(ruleIds(selector.select(List.of(b, a), List.of(), saga(SagaStatus.FAILED), order)));
     }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private static List<String> ruleIds(RcaSelector.SelectionResult result) {
         return result.getCandidates().stream().map(RcaCandidate::getRuleId).toList();

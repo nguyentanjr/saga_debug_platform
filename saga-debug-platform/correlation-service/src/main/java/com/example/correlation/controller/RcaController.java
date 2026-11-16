@@ -11,7 +11,6 @@ import java.util.List;
 @RestController
 @RequestMapping("/rca")
 public class    RcaController {
-
     private final RcaService rcaService;
     private final ExecutionLookup executionLookup;
 
@@ -20,7 +19,6 @@ public class    RcaController {
         this.executionLookup = executionLookup;
     }
 
-    /** Accepts the observed system's own identifier as well as a stored key. */
     @PostMapping("/analyze/{sagaId}")
     public ResponseEntity<?> analyze(@PathVariable("sagaId") String sagaId) {
         String executionId = executionLookup.resolve(sagaId).orElse(null);

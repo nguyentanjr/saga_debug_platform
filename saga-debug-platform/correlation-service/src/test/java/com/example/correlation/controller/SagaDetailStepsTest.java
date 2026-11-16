@@ -22,16 +22,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/**
- * L27: the detail view shows the step the workflow places each event in.
- *
- * <p>On the live hotel run every event read "Step: UNKNOWN" — the placeholder ingestion
- * stores when a source sends no step name — while every detector already knew the step
- * through the workflow (L16). The response now carries that placement, per stored event,
- * alongside the event as it was stored; the stored row is not rewritten.
- */
 class SagaDetailStepsTest {
-
     private static final Instant T0 = Instant.parse("2026-01-01T00:00:00Z");
 
     @Test
@@ -46,7 +37,6 @@ class SagaDetailStepsTest {
         assertThat(detail.getEvents()).extracting(SagaEvent::getStepName).containsOnly("UNKNOWN");
     }
 
-    /** Under disputed workflows no placement is authoritative, so none is offered (F7). */
     @Test
     void aRunWithConflictingWorkflowsGetsNoPlacement() {
         SagaInstance saga = saga();

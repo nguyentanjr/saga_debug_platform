@@ -15,16 +15,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
-/**
- * Checks that every derived query name resolves against its entity.
- *
- * <p>Spring Data parses these names when the application context starts, so a typo or a
- * property that does not exist is a startup failure rather than a compile error. Nothing
- * else in this suite boots a context — that needs Postgres and Kafka — so the parse is
- * exercised directly here instead.
- */
 class RepositoryQueryDerivationTest {
-
     @ParameterizedTest
     @ValueSource(strings = {
             "findByStatus",
@@ -97,10 +88,6 @@ class RepositoryQueryDerivationTest {
                 .doesNotThrowAnyException();
     }
 
-    /**
-     * Guards the list above against drifting out of date: every derived method declared
-     * on the repositories must appear in one of the parameterised sets.
-     */
     @Test
     void everyDeclaredDerivedQueryIsCovered() {
         List<Class<?>> repositories = List.of(
@@ -126,7 +113,7 @@ class RepositoryQueryDerivationTest {
 
         List<String> declared = repositories.stream()
                 .flatMap(repo -> java.util.Arrays.stream(repo.getDeclaredMethods()))
-                // @Query methods carry their own JPQL and are not name-derived.
+
                 .filter(m -> m.getAnnotation(org.springframework.data.jpa.repository.Query.class) == null)
                 .map(Method::getName)
                 .distinct()
