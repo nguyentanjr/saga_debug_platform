@@ -22,11 +22,13 @@ import com.example.correlation.service.rca.FailureSignalDeclaration;
 import com.example.correlation.service.rca.FailureSignalRegistry;
 import com.example.correlation.service.rca.RcaSelector;
 import com.example.correlation.service.rca.RuleRegistry;
+import com.example.correlation.service.rca.ServiceDownRule;
 import com.example.correlation.workflow.WorkflowRegistry;
 import com.example.correlation.workflow.WorkflowSpec;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -38,9 +40,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.OptionalInt;
 import java.util.stream.Collectors;
 
 @Service
@@ -61,7 +60,7 @@ public class RcaService {
     private final FailureSignalRegistry failureSignalRegistry;
     private final RcaService self;
 
-    private com.example.correlation.service.rca.ServiceDownRule serviceDownRule;
+    private ServiceDownRule serviceDownRule;
 
     public RcaService(SagaInstanceRepository sagaInstanceRepository,
             SagaEventRepository sagaEventRepository,
@@ -91,8 +90,8 @@ public class RcaService {
         this.self = self;
     }
 
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    void setServiceDownRule(com.example.correlation.service.rca.ServiceDownRule serviceDownRule) {
+    @Autowired(required = false)
+    void setServiceDownRule(ServiceDownRule serviceDownRule) {
         this.serviceDownRule = serviceDownRule;
     }
 
@@ -143,7 +142,7 @@ public class RcaService {
         addIfPresent(candidates, ruleObservabilityGap(anomalies));
         if (serviceDown != null) {
             candidates.add(serviceDown.candidate());
-            com.example.correlation.service.rca.ServiceDownRule.explainSymptoms(candidates, anomalies, serviceDown);
+            ServiceDownRule.explainSymptoms(candidates, anomalies, serviceDown);
         }
 
         ExecutionProjection projection =
@@ -183,17 +182,7 @@ public class RcaService {
             }
         }
 
-        List<String> traceIds = events.stream()
-                .map(RcaService::traceIdOf)
-                .filter(Objects::nonNull)
-                .distinct()
-                .collect(Collectors.toList());
-        if (!traceIds.isEmpty()) {
-            evidence.add("traceIds: " + traceIds);
-            suggestions.add("View traces: " + traceIds.stream()
-                    .map(tid -> "http://localhost:16686/trace/" + tid)
-                    .collect(Collectors.joining(", ")));
-        }
+        appendTraceLinks(events, evidence, suggestions);
 
         try {
             RcaResult result = new RcaResult();
@@ -239,6 +228,20 @@ public class RcaService {
             log.error("Failed to save RCA result for saga {}: {}", sagaId, e.getMessage());
             return null;
         }
+    }
+
+    private static void appendTraceLinks(List<SagaEvent> events, List<String> evidence, List<String> suggestions) {
+        List<String> traceIds = events.stream()
+                .map(RcaService::traceIdOf)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (traceIds.isEmpty()) return;
+
+        evidence.add("traceIds: " + traceIds);
+        suggestions.add("View traces: " + traceIds.stream()
+                .map(traceId -> "http://localhost:16686/trace/" + traceId)
+                .collect(Collectors.joining(", ")));
     }
 
     private void anchorCandidates(List<CandidateAssessment> candidates,
@@ -374,7 +377,7 @@ public class RcaService {
     private boolean citesWithdrawnFinding(RcaResult result) {
         Set<Long> cited = result.getCandidates().stream()
                 .flatMap(candidate -> candidate.getEvidence().stream())
-                .map(com.example.correlation.domain.rca.Evidence::anomalyId)
+                .map(Evidence::anomalyId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
         if (cited.isEmpty()) return false;
