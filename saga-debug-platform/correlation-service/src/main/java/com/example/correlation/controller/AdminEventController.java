@@ -1,6 +1,9 @@
 package com.example.correlation.controller;
 
+import com.example.correlation.domain.CorrelationBasis;
 import com.example.correlation.domain.EventTimeSource;
+import com.example.correlation.domain.ExecutionKey;
+import com.example.correlation.domain.IngestedEvent;
 import com.example.correlation.execution.ExecutionLookup;
 import com.example.correlation.service.CorrelationService;
 import com.example.correlation.service.RcaService;
@@ -54,15 +57,14 @@ public class AdminEventController {
                 ? Instant.parse(timestampStr)
                 : Instant.now();
 
-        com.example.correlation.domain.ExecutionKey key = com.example.correlation.domain.ExecutionKey
-                .of(com.example.correlation.domain.ExecutionKey.DEFAULT_SOURCE, sagaId);
+        ExecutionKey key = ExecutionKey.of(ExecutionKey.DEFAULT_SOURCE, sagaId);
 
-        correlationService.processEvent(new com.example.correlation.domain.IngestedEvent(
-                new com.example.correlation.domain.IngestedEvent.Identity(
+        correlationService.processEvent(new IngestedEvent(
+                new IngestedEvent.Identity(
                         key.source(), key, eventId, body.get("orderId"),
-                        com.example.correlation.domain.CorrelationBasis.DECLARED_KEY),
+                        CorrelationBasis.DECLARED_KEY),
                 null, eventType, stepName, serviceName, timestamp, payload, Instant.now(),
-                new com.example.correlation.domain.IngestedEvent.Causality(
+                new IngestedEvent.Causality(
                         body.get("causationId"), body.get("spanId"),
                         body.get("parentSpanId"), body.get("traceId")),
                 null, timestampStr != null ? EventTimeSource.DECLARED : EventTimeSource.TRANSPORT));

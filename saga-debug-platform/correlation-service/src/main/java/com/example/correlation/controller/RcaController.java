@@ -10,7 +10,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/rca")
-public class    RcaController {
+public class RcaController {
     private final RcaService rcaService;
     private final ExecutionLookup executionLookup;
 

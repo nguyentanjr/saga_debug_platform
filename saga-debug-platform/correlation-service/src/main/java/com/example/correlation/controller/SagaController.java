@@ -1,13 +1,20 @@
 package com.example.correlation.controller;
 
 import com.example.correlation.domain.*;
+import com.example.correlation.domain.rca.RcaCandidate;
 import com.example.correlation.dto.SagaDetailResponse;
 import com.example.correlation.execution.ExecutionLookup;
 import com.example.correlation.dto.SagaListItem;
 import com.example.correlation.repository.AnomalyRepository;
+import com.example.correlation.repository.ExecutionAliasRepository;
 import com.example.correlation.repository.RcaResultRepository;
 import com.example.correlation.repository.SagaEventRepository;
 import com.example.correlation.repository.SagaInstanceRepository;
+import com.example.correlation.repository.ServiceLifecycleEventRepository;
+import com.example.correlation.service.rca.ServiceDownRule;
+import com.example.correlation.workflow.WorkflowRegistry;
+import com.example.correlation.workflow.WorkflowSpec;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -16,9 +23,17 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @RestController
 @RequestMapping("/api/sagas")
@@ -27,16 +42,18 @@ public class SagaController {
     private final SagaEventRepository sagaEventRepository;
     private final AnomalyRepository anomalyRepository;
     private final RcaResultRepository rcaResultRepository;
-    private final com.example.correlation.repository.ExecutionAliasRepository aliasRepository;
+    private final ExecutionAliasRepository aliasRepository;
     private final ExecutionLookup executionLookup;
+    private final WorkflowRegistry workflowRegistry;
+    private ServiceLifecycleEventRepository lifecycleRepository;
 
     public SagaController(SagaInstanceRepository sagaInstanceRepository,
                           SagaEventRepository sagaEventRepository,
                           AnomalyRepository anomalyRepository,
                           RcaResultRepository rcaResultRepository,
-                          com.example.correlation.repository.ExecutionAliasRepository aliasRepository,
+                          ExecutionAliasRepository aliasRepository,
                           ExecutionLookup executionLookup,
-                          com.example.correlation.workflow.WorkflowRegistry workflowRegistry) {
+                          WorkflowRegistry workflowRegistry) {
         this.sagaInstanceRepository = sagaInstanceRepository;
         this.sagaEventRepository = sagaEventRepository;
         this.anomalyRepository = anomalyRepository;
@@ -46,12 +63,8 @@ public class SagaController {
         this.workflowRegistry = workflowRegistry;
     }
 
-    private final com.example.correlation.workflow.WorkflowRegistry workflowRegistry;
-
-    private com.example.correlation.repository.ServiceLifecycleEventRepository lifecycleRepository;
-
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    void setLifecycleRepository(com.example.correlation.repository.ServiceLifecycleEventRepository repository) {
+    @Autowired(required = false)
+    void setLifecycleRepository(ServiceLifecycleEventRepository repository) {
         this.lifecycleRepository = repository;
     }
 
@@ -85,8 +98,8 @@ public class SagaController {
                             r -> (String) r[0],
                             r -> (Long) r[1]));
 
-        Map<String, RcaResult> latestRca = new java.util.HashMap<>();
-        Map<String, Long> anomalyCounts = new java.util.HashMap<>();
+        Map<String, RcaResult> latestRca = new HashMap<>();
+        Map<String, Long> anomalyCounts = new HashMap<>();
         if (!sagaIds.isEmpty()) {
             for (RcaResult rca : rcaResultRepository.findBySagaIdInOrderByCreatedAtDesc(sagaIds)) {
                 latestRca.putIfAbsent(rca.getSagaId(), rca);
@@ -125,46 +138,52 @@ public class SagaController {
     }
 
     List<SagaDetailResponse.LifecycleEntry> lifecycleFor(SagaInstance saga,
-            com.example.correlation.workflow.WorkflowSpec workflow) {
+            WorkflowSpec workflow) {
         if (lifecycleRepository == null || saga.getStartTime() == null) return List.of();
-        java.util.Set<String> services = new java.util.LinkedHashSet<>();
-        java.util.stream.Stream.concat(
-                        workflow.getSteps() == null ? java.util.stream.Stream.empty() : workflow.getSteps().stream(),
-                        workflow.getCompensationSteps() == null ? java.util.stream.Stream.empty()
-                                : workflow.getCompensationSteps().stream())
-                .map(step -> step.getService())
-                .filter(service -> service != null && !service.isBlank())
-                .forEach(services::add);
+        Set<String> services = declaredServices(workflow);
         if (services.isEmpty()) return List.of();
 
         Instant start = saga.getStartTime();
         Instant end = saga.getEndTime() != null ? saga.getEndTime() : Instant.now();
-        List<com.example.correlation.domain.ServiceLifecycleEvent> found =
-                com.example.correlation.service.rca.ServiceDownRule.readable(lifecycleRepository
+        List<ServiceLifecycleEvent> found =
+                ServiceDownRule.readable(lifecycleRepository
                         .findByServiceNameInAndOccurredAtBetweenOrderByOccurredAtAsc(services,
                                 start.minus(Duration.ofHours(1)), end), workflow.getRuntimeScope());
 
-        Map<String, com.example.correlation.domain.ServiceLifecycleEvent> stateAtStart = new java.util.HashMap<>();
-        List<com.example.correlation.domain.ServiceLifecycleEvent> shown = new java.util.ArrayList<>();
+        Map<String, ServiceLifecycleEvent> stateAtStart = new HashMap<>();
+        List<ServiceLifecycleEvent> shown = new ArrayList<>();
         for (var event : found) {
             if (event.getOccurredAt().isBefore(start)) stateAtStart.put(event.getServiceName(), event);
             else shown.add(event);
         }
         shown.addAll(stateAtStart.values());
         return shown.stream()
-                .sorted(java.util.Comparator.comparing(com.example.correlation.domain.ServiceLifecycleEvent::getOccurredAt))
+                .sorted(Comparator.comparing(ServiceLifecycleEvent::getOccurredAt))
                 .map(e -> new SagaDetailResponse.LifecycleEntry(e.getServiceName(), e.getState().name(),
                         e.getOccurredAt(), e.getSource(), e.getBasis().name(), e.getDetail()))
                 .toList();
+    }
+
+    private static Set<String> declaredServices(WorkflowSpec workflow) {
+        Stream<WorkflowSpec.StepSpec> forward = workflow.getSteps() == null
+                ? Stream.empty() : workflow.getSteps().stream();
+        Stream<WorkflowSpec.StepSpec> compensation = workflow.getCompensationSteps() == null
+                ? Stream.empty() : workflow.getCompensationSteps().stream();
+        Set<String> services = new LinkedHashSet<>();
+        Stream.concat(forward, compensation)
+                .map(WorkflowSpec.StepSpec::getService)
+                .filter(service -> service != null && !service.isBlank())
+                .forEach(services::add);
+        return services;
     }
 
     static String promotedAnchorStep(RcaResult rca) {
         if (rca.getRootCause() == null || rca.getCandidates() == null) return null;
         return rca.getCandidates().stream()
                 .filter(c -> rca.getRootCause().equals(c.getRootCause())
-                        && java.util.Objects.equals(rca.getRuleId(), c.getRuleId()))
-                .map(com.example.correlation.domain.rca.RcaCandidate::getAnchorStepId)
-                .filter(java.util.Objects::nonNull)
+                        && Objects.equals(rca.getRuleId(), c.getRuleId()))
+                .map(RcaCandidate::getAnchorStepId)
+                .filter(Objects::nonNull)
                 .findFirst()
                 .orElse(null);
     }
@@ -203,16 +222,9 @@ public class SagaController {
         }
         response.setEvents(events);
         if (!saga.hasWorkflowConflict()) {
-            workflowRegistry.byType(saga.getWorkflowType())
-                    .ifPresent(workflow -> response.setLifecycle(lifecycleFor(saga, workflow)));
             workflowRegistry.byType(saga.getWorkflowType()).ifPresent(workflow -> {
-                java.util.Map<String, String> steps = new java.util.LinkedHashMap<>();
-                for (SagaEvent event : events) {
-                    if (event.getId() == null) continue;
-                    workflow.classifyEvent(event.getEventType()).ifPresent(role ->
-                            steps.put(String.valueOf(event.getId()), role.stepId()));
-                }
-                response.setWorkflowSteps(steps);
+                response.setLifecycle(lifecycleFor(saga, workflow));
+                response.setWorkflowSteps(stepsByEventId(workflow, events));
             });
         }
         if (saga.hasWorkflowConflict()) {
@@ -223,5 +235,15 @@ public class SagaController {
         response.setRcaResults(rcaResults);
 
         return ResponseEntity.ok(response);
+    }
+
+    private static Map<String, String> stepsByEventId(WorkflowSpec workflow, List<SagaEvent> events) {
+        Map<String, String> steps = new LinkedHashMap<>();
+        for (SagaEvent event : events) {
+            if (event.getId() == null) continue;
+            workflow.classifyEvent(event.getEventType()).ifPresent(role ->
+                    steps.put(String.valueOf(event.getId()), role.stepId()));
+        }
+        return steps;
     }
 }
