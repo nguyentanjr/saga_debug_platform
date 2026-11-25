@@ -16,6 +16,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @Component
 public class RuleRegistry {
@@ -94,6 +95,6 @@ public class RuleRegistry {
     public Set<String> ruleIds() {
         return rules.stream()
                 .map(AnomalySignatureRule::getId)
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 }

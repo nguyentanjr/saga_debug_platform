@@ -6,12 +6,14 @@ import com.example.correlation.domain.SagaStatus;
 import com.example.correlation.domain.rca.CandidateAssessment;
 import com.example.correlation.domain.rca.CandidateStatus;
 import com.example.correlation.domain.rca.ClaimSubject;
+import com.example.correlation.domain.rca.Evidence;
 import com.example.correlation.domain.rca.RcaCandidate;
 import com.example.correlation.domain.rca.RcaStatus;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.OptionalInt;
@@ -107,7 +109,7 @@ public class RcaSelector {
         return Comparator
                 .comparingInt((CandidateAssessment c) -> statusRank(c.getStatus()))
                 .thenComparingInt(c -> anchorPosition(c, order))
-                .thenComparing(c -> c.getAnchorAt(),
+                .thenComparing(CandidateAssessment::getAnchorAt,
                         Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparingInt(c -> -severityRank(c.getSeverity()))
                 .thenComparing(CandidateAssessment::getRuleId,
@@ -179,9 +181,9 @@ public class RcaSelector {
                 .filter(candidate -> candidate.getSubject() == subject)
                 .flatMap(candidate -> candidate.getEvidence().stream())
                 .filter(Objects::nonNull)
-                .map(evidence -> evidence.anomalyId())
+                .map(Evidence::anomalyId)
                 .filter(Objects::nonNull)
-                .collect(Collectors.toCollection(java.util.HashSet::new));
+                .collect(Collectors.toCollection(HashSet::new));
     }
 
     private List<String> buildMissingEvidence(List<CandidateAssessment> candidates, RcaStatus status) {

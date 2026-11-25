@@ -13,6 +13,7 @@ import com.example.correlation.execution.EvidenceTimeline;
 import com.example.correlation.repository.ServiceLifecycleEventRepository;
 import com.example.correlation.workflow.WorkflowSpec;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -20,6 +21,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -28,8 +30,7 @@ import java.util.Optional;
 import java.util.Set;
 
 @Component
-
-@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
+@ConditionalOnProperty(
         prefix = "correlation.liveness", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class ServiceDownRule {
     public static final String RULE_ID = "R25";
@@ -74,7 +75,7 @@ public class ServiceDownRule {
             return lifecycle.stream().filter(e -> runtimeScope.equals(e.getScope())).toList();
         }
         Map<String, Set<Optional<String>>> scopesByService = new HashMap<>();
-        lifecycle.forEach(e -> scopesByService.computeIfAbsent(e.getServiceName(), k -> new java.util.HashSet<>())
+        lifecycle.forEach(e -> scopesByService.computeIfAbsent(e.getServiceName(), k -> new HashSet<>())
                 .add(Optional.ofNullable(e.getScope())));
         return lifecycle.stream()
                 .filter(e -> scopesByService.get(e.getServiceName()).size() == 1)
@@ -97,38 +98,39 @@ public class ServiceDownRule {
             Instant from = lastHeard;
             Instant to = heardAt(current);
             if (to.isAfter(lastHeard)) lastHeard = to;
-            for (String step : awaitedBetween(workflow, previous, current)) {
-                Optional<String> service = workflow.serviceOf(step);
-                if (service.isEmpty()) continue;
-                int timeout = workflow.getStepTimeoutSeconds(step);
-                if (Duration.between(from, to).getSeconds() > timeout) {
-                    waits.add(new Wait(step, service.get(), from, to, timeout,
-                            current.getEventId(), current.getEventType()));
-                }
-            }
+            addOverdueWaits(waits, workflow, awaitedBetween(workflow, previous, current), from, to, current);
         }
 
         if (saga.getStatus() != null && !ENDED.contains(saga.getStatus())) {
             SagaEvent last = heard.get(heard.size() - 1);
-            Instant from = lastHeard;
-            workflow.classifyEvent(last.getEventType()).ifPresent(role -> {
-                List<String> awaited = switch (role.role()) {
-                    case COMPLETED -> workflow.stepsAfter(role.stepId());
-                    case FAILED -> List.of();
-                    default -> List.of(role.stepId());
-                };
-                for (String step : awaited) {
-                    Optional<String> service = workflow.serviceOf(step);
-                    if (service.isEmpty()) continue;
-                    int timeout = workflow.getStepTimeoutSeconds(step);
-                    if (Duration.between(from, now).getSeconds() > timeout) {
-                        waits.add(new Wait(step, service.get(), from, now, timeout, null, null));
-                    }
-                }
-            });
+            Optional<WorkflowSpec.EventRole> lastRole = workflow.classifyEvent(last.getEventType());
+            if (lastRole.isPresent()) {
+                addOverdueWaits(waits, workflow, awaitedAfter(workflow, lastRole.get()), lastHeard, now, null);
+            }
         }
         waits.sort(Comparator.comparing(Wait::from));
         return waits;
+    }
+
+    private static List<String> awaitedAfter(WorkflowSpec workflow, WorkflowSpec.EventRole role) {
+        return switch (role.role()) {
+            case COMPLETED -> workflow.stepsAfter(role.stepId());
+            case FAILED -> List.of();
+            default -> List.of(role.stepId());
+        };
+    }
+
+    private static void addOverdueWaits(List<Wait> waits, WorkflowSpec workflow, List<String> steps,
+            Instant from, Instant to, SagaEvent closingEvent) {
+        for (String step : steps) {
+            Optional<String> service = workflow.serviceOf(step);
+            if (service.isEmpty()) continue;
+            int timeout = workflow.getStepTimeoutSeconds(step);
+            if (Duration.between(from, to).getSeconds() <= timeout) continue;
+            waits.add(new Wait(step, service.get(), from, to, timeout,
+                    closingEvent != null ? closingEvent.getEventId() : null,
+                    closingEvent != null ? closingEvent.getEventType() : null));
+        }
     }
 
     private static List<String> awaitedBetween(WorkflowSpec workflow, SagaEvent previous, SagaEvent current) {
@@ -188,7 +190,7 @@ public class ServiceDownRule {
 
     private static CandidateAssessment candidate(SagaInstance saga, Wait wait, DownInterval down) {
         boolean ended = saga.getStatus() != null && ENDED.contains(saga.getStatus());
-        CandidateAssessment c = CandidateAssessment.builder()
+        CandidateAssessment candidate = CandidateAssessment.builder()
                 .ruleId(RULE_ID)
                 .rootCause(ROOT_CAUSE)
                 .severity(ended ? "MEDIUM" : "CRITICAL")
@@ -196,45 +198,45 @@ public class ServiceDownRule {
                 .build();
 
         ServiceLifecycleEvent exit = down.exit();
-        c.getEvidence().add(Evidence.of(
+        candidate.getEvidence().add(Evidence.of(
                 wait.service() + (exit.getBasis() == ServiceLifecycleEvent.Basis.PROBE
                                 ? " stopped answering probes at " : " exited at ") + exit.getOccurredAt()
                         + " (" + exit.getDetail() + ", reported by " + exit.getSource() + ")",
                 exit.getDetail(), "running while " + wait.stepId() + " is awaited", null, List.of()));
         if (down.start() != null) {
             long downFor = Duration.between(exit.getOccurredAt(), down.start().getOccurredAt()).getSeconds();
-            c.getEvidence().add(Evidence.of(
+            candidate.getEvidence().add(Evidence.of(
                     wait.service() + " was started again at " + down.start().getOccurredAt()
                             + " after " + downFor + "s down", null, null, null, List.of()));
         } else {
-            c.getEvidence().add(Evidence.of(
+            candidate.getEvidence().add(Evidence.of(
                     wait.service() + " has not been reported started again", null, null, null, List.of()));
         }
         String waited = "Run waited " + wait.seconds() + "s for step " + wait.stepId()
                 + " (declared timeout " + wait.timeoutSeconds() + "s)";
         if (wait.isOpen()) {
-            c.getEvidence().add(Evidence.of(waited + " and nothing for it has arrived",
+            candidate.getEvidence().add(Evidence.of(waited + " and nothing for it has arrived",
                     wait.seconds() + "s", "<= " + wait.timeoutSeconds() + "s", null, List.of()));
         } else {
-            c.getEvidence().add(Evidence.ofEvent(waited + " until " + wait.closingEventType() + " arrived",
+            candidate.getEvidence().add(Evidence.ofEvent(waited + " until " + wait.closingEventType() + " arrived",
                     wait.seconds() + "s", "<= " + wait.timeoutSeconds() + "s", wait.closingEventId()));
         }
 
-        c.setAnchorStepId(wait.stepId());
+        candidate.setAnchorStepId(wait.stepId());
         if (exit.getBasis() == ServiceLifecycleEvent.Basis.PROBE) {
-            c.setStatus(CandidateStatus.SUPPORTING_EVIDENCE);
-            c.setStatusReason(wait.service() + " could not be reached by a probe while the run was "
+            candidate.setStatus(CandidateStatus.SUPPORTING_EVIDENCE);
+            candidate.setStatusReason(wait.service() + " could not be reached by a probe while the run was "
                     + "waiting on " + wait.stepId() + "; a probe cannot tell a stopped process "
                     + "from an unreachable one.");
         } else {
-            c.setStatusReason("The runtime reported " + wait.service()
+            candidate.setStatusReason("The runtime reported " + wait.service()
                     + "'s process exited while the run was waiting on " + wait.stepId()
                     + "; the run's own events could only show the silence.");
         }
-        c.getSuggestions().add("Check " + wait.service() + " logs before " + exit.getOccurredAt()
+        candidate.getSuggestions().add("Check " + wait.service() + " logs before " + exit.getOccurredAt()
                 + " for why it exited (" + exit.getDetail() + ")");
-        c.getSuggestions().add("Review " + wait.service() + "'s restart policy and health checks");
-        return c;
+        candidate.getSuggestions().add("Review " + wait.service() + "'s restart policy and health checks");
+        return candidate;
     }
 
     public static void explainSymptoms(List<CandidateAssessment> candidates, List<Anomaly> anomalies,
@@ -246,28 +248,36 @@ public class ServiceDownRule {
         String reason = "Consequence of " + RULE_ID + ": " + wait.service()
                 + " was down while the run waited on " + wait.stepId() + ".";
 
-        for (CandidateAssessment c : candidates) {
-            if (c.getStatus() != CandidateStatus.STRONG_EVIDENCE) continue;
-            boolean symptom = false;
-            if ("R07".equals(c.getRuleId())) {
-                List<Anomaly> cited = c.getEvidence().stream()
-                        .map(Evidence::anomalyId).filter(Objects::nonNull)
-                        .map(byId::get).filter(Objects::nonNull).toList();
-                symptom = !cited.isEmpty() && cited.stream().allMatch(a ->
-                        a.getAnomalyType() == AnomalyType.STEP_TIMEOUT
-                                && ("workflow:" + wait.stepId() + ".timeout").equals(a.getThresholdSource()));
-            } else if ("R06".equals(c.getRuleId())) {
-                List<Anomaly> stuck = anomalies.stream()
-                        .filter(a -> a.getAnomalyType() == AnomalyType.SAGA_STUCK)
-                        .filter(a -> a.getDetectedAt() != null).toList();
-                symptom = !stuck.isEmpty() && stuck.stream().allMatch(a ->
-                        !a.getDetectedAt().isBefore(wait.from()) && !a.getDetectedAt().isAfter(wait.to()));
-            }
+        for (CandidateAssessment candidate : candidates) {
+            if (candidate.getStatus() != CandidateStatus.STRONG_EVIDENCE) continue;
+            boolean symptom = switch (String.valueOf(candidate.getRuleId())) {
+                case "R07" -> citesOnlyTimeoutOf(candidate, wait, byId);
+                case "R06" -> allStuckFindingsWithin(anomalies, wait);
+                default -> false;
+            };
             if (symptom) {
-                c.setStatus(CandidateStatus.SUPPORTING_EVIDENCE);
-                c.setStatusReason(reason);
+                candidate.setStatus(CandidateStatus.SUPPORTING_EVIDENCE);
+                candidate.setStatusReason(reason);
             }
         }
+    }
+
+    private static boolean citesOnlyTimeoutOf(CandidateAssessment candidate, Wait wait, Map<Long, Anomaly> byId) {
+        List<Anomaly> cited = candidate.getEvidence().stream()
+                .map(Evidence::anomalyId).filter(Objects::nonNull)
+                .map(byId::get).filter(Objects::nonNull).toList();
+        String waitedStepTimeout = "workflow:" + wait.stepId() + ".timeout";
+        return !cited.isEmpty() && cited.stream().allMatch(a ->
+                a.getAnomalyType() == AnomalyType.STEP_TIMEOUT
+                        && waitedStepTimeout.equals(a.getThresholdSource()));
+    }
+
+    private static boolean allStuckFindingsWithin(List<Anomaly> anomalies, Wait wait) {
+        List<Anomaly> stuck = anomalies.stream()
+                .filter(a -> a.getAnomalyType() == AnomalyType.SAGA_STUCK)
+                .filter(a -> a.getDetectedAt() != null).toList();
+        return !stuck.isEmpty() && stuck.stream().allMatch(a ->
+                !a.getDetectedAt().isBefore(wait.from()) && !a.getDetectedAt().isAfter(wait.to()));
     }
 
     private static Instant heardAt(SagaEvent event) {

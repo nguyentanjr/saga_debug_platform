@@ -11,10 +11,12 @@ import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 @Component
 public class FailureSignalRegistry {
@@ -87,7 +89,7 @@ public class FailureSignalRegistry {
         return Optional.ofNullable(bySource.get(sourceName));
     }
 
-    public java.util.Set<String> declaredSources() {
-        return java.util.Collections.unmodifiableSet(bySource.keySet());
+    public Set<String> declaredSources() {
+        return Collections.unmodifiableSet(bySource.keySet());
     }
 }
