@@ -3,6 +3,7 @@ package com.example.correlation.ingestion;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -50,18 +51,23 @@ public class SourceMapping {
         if (tree == null || !tree.isObject()) return rawPayload;
         boolean changed = false;
         for (String path : redact) {
-            String[] segments = path.split("\\.");
-            JsonNode parent = tree;
-            for (int i = 0; i < segments.length - 1 && parent != null; i++) {
-                parent = parent.get(segments[i]);
-            }
-            String leaf = segments[segments.length - 1];
-            if (parent instanceof com.fasterxml.jackson.databind.node.ObjectNode object && object.has(leaf)) {
-                object.put(leaf, REDACTED);
-                changed = true;
-            }
+            changed |= redactPath(tree, path);
         }
         return changed ? tree.toString() : rawPayload;
+    }
+
+    private static boolean redactPath(JsonNode root, String path) {
+        String[] segments = path.split("\\.");
+        JsonNode parent = root;
+        for (int i = 0; i < segments.length - 1 && parent != null; i++) {
+            parent = parent.get(segments[i]);
+        }
+        String leaf = segments[segments.length - 1];
+        if (parent instanceof ObjectNode object && object.has(leaf)) {
+            object.put(leaf, REDACTED);
+            return true;
+        }
+        return false;
     }
 
     public String getName() { return name; }
@@ -120,14 +126,19 @@ public class SourceMapping {
         }
 
         for (Map.Entry<String, String> candidate : eventTypes.entrySet()) {
-            try {
-                if (Pattern.matches(candidate.getKey(), sourceType)) {
-                    return candidate.getValue();
-                }
-            } catch (PatternSyntaxException e) {
+            if (matchesPattern(candidate.getKey(), sourceType)) {
+                return candidate.getValue();
             }
         }
         return sourceType;
+    }
+
+    private static boolean matchesPattern(String regex, String value) {
+        try {
+            return Pattern.matches(regex, value);
+        } catch (PatternSyntaxException invalidRegex) {
+            return false;
+        }
     }
 
     public Optional<String> eventId(JsonNode payload, RawObservation observation) {
