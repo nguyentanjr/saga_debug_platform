@@ -1,13 +1,20 @@
 package com.example.correlation.config;
 
 import com.example.correlation.ingestion.SourceMappingRegistry;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.util.backoff.ExponentialBackOff;
+
+import java.sql.SQLRecoverableException;
+import java.sql.SQLTransientException;
 
 @Configuration
 public class KafkaErrorHandlingConfig {
@@ -24,7 +31,7 @@ public class KafkaErrorHandlingConfig {
                 bounded());
 
         handler.addNotRetryableExceptions(
-                com.fasterxml.jackson.core.JsonProcessingException.class,
+                JsonProcessingException.class,
                 IllegalArgumentException.class);
 
         handler.setBackOffFunction((record, exception) -> {
@@ -53,16 +60,21 @@ public class KafkaErrorHandlingConfig {
     }
 
     static boolean storeUnavailable(Throwable exception) {
-        for (Throwable t = exception; t != null; t = t.getCause() == t ? null : t.getCause()) {
-            if (t instanceof org.springframework.dao.TransientDataAccessException
-                    || t instanceof org.springframework.dao.DataAccessResourceFailureException
-                    || t instanceof org.springframework.transaction.CannotCreateTransactionException
-                    || t instanceof java.sql.SQLTransientException
-                    || t instanceof java.sql.SQLRecoverableException) {
-                return true;
-            }
+        Throwable current = exception;
+        while (current != null) {
+            if (isStoreOutage(current)) return true;
+            Throwable cause = current.getCause();
+            current = cause == current ? null : cause;
         }
         return false;
+    }
+
+    private static boolean isStoreOutage(Throwable exception) {
+        return exception instanceof TransientDataAccessException
+                || exception instanceof DataAccessResourceFailureException
+                || exception instanceof CannotCreateTransactionException
+                || exception instanceof SQLTransientException
+                || exception instanceof SQLRecoverableException;
     }
 
     static String valueForLog(ConsumerRecord<?, ?> record, SourceMappingRegistry mappings) {

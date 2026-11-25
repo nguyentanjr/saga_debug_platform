@@ -117,15 +117,17 @@ public class KafkaClusterListeners implements SmartLifecycle {
         ConcurrentMessageListenerContainer<String, String> container =
                 new ConcurrentMessageListenerContainer<>(
                         new DefaultKafkaConsumerFactory<>(consumerProperties), containerProperties);
-        container.setConcurrency(cluster.getConcurrency() != null
-                ? cluster.getConcurrency()
-                : kafkaProperties.getListener().getConcurrency() != null
-                        ? kafkaProperties.getListener().getConcurrency()
-                        : 1);
+        container.setConcurrency(concurrencyOf(cluster, kafkaProperties));
         container.setCommonErrorHandler(errorHandler);
         container.setBeanName("saga-events-" + (origin != null ? origin : "default"));
         container.setAutoStartup(false);
         return container;
+    }
+
+    private static int concurrencyOf(KafkaSourceProperties.Cluster cluster, KafkaProperties kafkaProperties) {
+        if (cluster.getConcurrency() != null) return cluster.getConcurrency();
+        Integer listenerDefault = kafkaProperties.getListener().getConcurrency();
+        return listenerDefault != null ? listenerDefault : 1;
     }
 
     public Long backlog() {
