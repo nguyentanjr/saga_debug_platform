@@ -481,11 +481,6 @@ public class RcaService {
 
     private String determineOutcome(SagaInstance saga, List<Anomaly> anomalies, RcaStatus rcaStatus) {
         boolean hasAnomalies = !anomalies.isEmpty();
-        boolean hasRca = rcaStatus == RcaStatus.EVIDENCE_AVAILABLE;
-        boolean isTerminal = saga.getStatus() == SagaStatus.COMPLETED
-                || saga.getStatus() == SagaStatus.COMPENSATED
-                || saga.getStatus() == SagaStatus.FAILED;
-
         if (saga.getStatus() == SagaStatus.COMPLETED && !hasAnomalies) return "NORMAL";
         if (saga.getStatus() == SagaStatus.COMPLETED && hasAnomalies) return "SELF_HEALED";
         if (saga.getStatus() == SagaStatus.COMPENSATED) return "COMPENSATED";
@@ -517,43 +512,43 @@ public class RcaService {
             String breakerPattern =
                     declaration.matchedPattern(FailureSignal.BREAKER_REJECTED_CALL, reason).orElse(null);
             if (breakerPattern != null) {
-                CandidateAssessment rr = candidate("CIRCUIT_BREAKER_OPEN", "CRITICAL", "R01",
+                CandidateAssessment assessment = candidate("CIRCUIT_BREAKER_OPEN", "CRITICAL", "R01",
                         CandidateStatus.STRONG_EVIDENCE);
-                rr.getEvidence().add(Evidence.ofEvent(
+                assessment.getEvidence().add(Evidence.ofEvent(
                         event.getEventType() + " carries the source's own report that a breaker "
                                 + "refused the call",
                         reason, "the step succeeds or reports a business failure",
                         event.getEventId()));
-                rr.getEvidence().add(Evidence.of(
+                assessment.getEvidence().add(Evidence.of(
                         "Matched declared BREAKER_REJECTED_CALL wording for source '"
                                 + event.getSourceName() + "': \"" + breakerPattern + "\"", null));
 
-                rr.setStatusReason("The source reported breaker refusal for this call. Why the "
+                assessment.setStatusReason("The source reported breaker refusal for this call. Why the "
                         + "breaker was open is not established by this evidence.");
-                rr.getSuggestions().add("Check downstream service health");
-                rr.getSuggestions().add("Look at what was failing before the breaker opened");
-                return rr;
+                assessment.getSuggestions().add("Check downstream service health");
+                assessment.getSuggestions().add("Look at what was failing before the breaker opened");
+                return assessment;
             }
 
             String exhaustedPattern =
                     declaration.matchedPattern(FailureSignal.RETRY_EXHAUSTED, reason).orElse(null);
             if (exhaustedPattern != null) {
-                CandidateAssessment rr = candidate("RETRY_EXHAUSTED", "HIGH", "R23",
+                CandidateAssessment assessment = candidate("RETRY_EXHAUSTED", "HIGH", "R23",
                         CandidateStatus.STRONG_EVIDENCE);
-                rr.getEvidence().add(Evidence.ofEvent(
+                assessment.getEvidence().add(Evidence.ofEvent(
                         event.getEventType() + " reports that the declared retry policy was "
                                 + "exhausted",
                         reason, "the step succeeds or reports a business failure",
                         event.getEventId()));
-                rr.getEvidence().add(Evidence.of(
+                assessment.getEvidence().add(Evidence.of(
                         "Matched declared RETRY_EXHAUSTED wording for source '"
                                 + event.getSourceName() + "': \"" + exhaustedPattern + "\"", null));
 
-                rr.setStatusReason("Retries were exhausted. Nothing in this failure message "
+                assessment.setStatusReason("Retries were exhausted. Nothing in this failure message "
                         + "reports breaker state, so no claim is made about one.");
-                rr.getSuggestions().add("Check downstream service health");
-                rr.getSuggestions().add("Review the retry policy against the step's real latency");
-                return rr;
+                assessment.getSuggestions().add("Check downstream service health");
+                assessment.getSuggestions().add("Review the retry policy against the step's real latency");
+                return assessment;
             }
         }
         return null;
@@ -561,105 +556,107 @@ public class RcaService {
 
     private CandidateAssessment ruleTimeoutRetryStorm(WorkflowSpec workflow, List<Anomaly> anomalies,
             List<SagaEvent> events) {
+        Anomaly retryBurst = firstOfType(anomalies, AnomalyType.RETRY_BURST);
+        if (retryBurst == null) return null;
+
         Set<String> retryEventTypes = workflow != null ? workflow.retryEventTypes() : Set.of();
-        for (Anomaly a : anomalies) {
-            if (a.getAnomalyType() == AnomalyType.RETRY_BURST) {
-                Map<SagaEvent, String> timeoutReasons = new LinkedHashMap<>();
-                for (SagaEvent e : events) {
-                    if (!retryEventTypes.contains(e.getEventType())) continue;
-                    failureSignalRegistry.forSource(e.getSourceName()).ifPresent(declaration ->
-                            declaration.readReason(e.getPayload())
-                                    .filter(reason -> declaration
-                                            .matchedPattern(FailureSignal.CALL_TIMED_OUT, reason).isPresent())
-                                    .ifPresent(reason -> timeoutReasons.put(e, reason)));
-                }
-                List<SagaEvent> timeoutRetryEvents = new ArrayList<>(timeoutReasons.keySet());
-                boolean hasTimeoutEvidence = !timeoutRetryEvents.isEmpty();
-                CandidateAssessment rr = candidate("TIMEOUT_RETRY_STORM", "CRITICAL", "R02",
-                        hasTimeoutEvidence ? CandidateStatus.STRONG_EVIDENCE : CandidateStatus.WEAK_EVIDENCE);
-                rr.getEvidence().add(evidence(a));
-                if (hasTimeoutEvidence) {
-                    rr.getEvidence().add(Evidence.of(
-                            "Retry events carry the source's declared timeout wording",
-                            timeoutReasons.values().stream()
-                                    .limit(3)
-                                    .collect(Collectors.joining("; ")),
-                            "retry burst should not be caused by timeout exceptions",
-                            null,
-                            timeoutRetryEvents.stream()
-                                    .map(SagaEvent::getEventId)
-                                    .filter(Objects::nonNull)
-                                    .collect(Collectors.toList())));
-                } else {
-                    rr.setStatusReason("No retry event carries a reason this source declares as a timeout.");
-                }
-                rr.getSuggestions().add("Reduce retry count or increase backoff");
-                rr.getSuggestions().add("Check service logs for timeout root cause");
-                return rr;
-            }
+        Map<SagaEvent, String> timeoutReasons = timeoutReasonsOf(events, retryEventTypes);
+        List<SagaEvent> timeoutRetryEvents = new ArrayList<>(timeoutReasons.keySet());
+        boolean hasTimeoutEvidence = !timeoutRetryEvents.isEmpty();
+
+        CandidateAssessment assessment = candidate("TIMEOUT_RETRY_STORM", "CRITICAL", "R02",
+                hasTimeoutEvidence ? CandidateStatus.STRONG_EVIDENCE : CandidateStatus.WEAK_EVIDENCE);
+        assessment.getEvidence().add(evidence(retryBurst));
+        if (hasTimeoutEvidence) {
+            assessment.getEvidence().add(Evidence.of(
+                    "Retry events carry the source's declared timeout wording",
+                    timeoutReasons.values().stream().limit(3).collect(Collectors.joining("; ")),
+                    "retry burst should not be caused by timeout exceptions",
+                    null,
+                    eventIds(timeoutRetryEvents)));
+        } else {
+            assessment.setStatusReason("No retry event carries a reason this source declares as a timeout.");
         }
-        return null;
+        assessment.getSuggestions().add("Reduce retry count or increase backoff");
+        assessment.getSuggestions().add("Check service logs for timeout root cause");
+        return assessment;
+    }
+
+    private Map<SagaEvent, String> timeoutReasonsOf(List<SagaEvent> events, Set<String> retryEventTypes) {
+        Map<SagaEvent, String> timeoutReasons = new LinkedHashMap<>();
+        for (SagaEvent event : events) {
+            if (!retryEventTypes.contains(event.getEventType())) continue;
+            failureSignalRegistry.forSource(event.getSourceName()).ifPresent(declaration ->
+                    declaration.readReason(event.getPayload())
+                            .filter(reason -> declaration.matchedPattern(FailureSignal.CALL_TIMED_OUT, reason).isPresent())
+                            .ifPresent(reason -> timeoutReasons.put(event, reason)));
+        }
+        return timeoutReasons;
+    }
+
+    private static Anomaly firstOfType(List<Anomaly> anomalies, AnomalyType type) {
+        return anomalies.stream().filter(a -> a.getAnomalyType() == type).findFirst().orElse(null);
+    }
+
+    private static boolean hasAnomaly(List<Anomaly> anomalies, AnomalyType type) {
+        return firstOfType(anomalies, type) != null;
+    }
+
+    private static boolean hasEnded(SagaInstance saga) {
+        return saga.getStatus() != null && saga.getStatus().isTerminal();
     }
 
     private CandidateAssessment ruleServiceCrash(SagaInstance saga, List<Anomaly> anomalies,
             List<SagaEvent> events) {
-        boolean hasStuck = anomalies.stream()
-                .anyMatch(a -> a.getAnomalyType() == AnomalyType.SAGA_STUCK);
-        boolean hasMissingTerminal = anomalies.stream()
-                .anyMatch(a -> a.getAnomalyType() == AnomalyType.MISSING_TERMINAL_EVENT);
-        boolean hasStepTimeout = anomalies.stream()
-                .anyMatch(a -> a.getAnomalyType() == AnomalyType.STEP_TIMEOUT);
+        boolean silenceWithoutEnding = hasAnomaly(anomalies, AnomalyType.SAGA_STUCK)
+                && hasAnomaly(anomalies, AnomalyType.MISSING_TERMINAL_EVENT);
+        if (!silenceWithoutEnding || hasAnomaly(anomalies, AnomalyType.STEP_TIMEOUT)) return null;
 
-        if (hasStuck && hasMissingTerminal && !hasStepTimeout) {
-            boolean isRecovered = saga.getStatus() == SagaStatus.COMPLETED
-                    || saga.getStatus() == SagaStatus.COMPENSATED
-                    || saga.getStatus() == SagaStatus.FAILED;
+        int serviceCrashTimeoutSeconds = longestStepTimeoutSeconds(saga)
+                * detectionProperties.getServiceCrashTimeoutMultiplier();
 
-            var workflow = workflowRegistry.byType(saga.getWorkflowType()).orElse(null);
+        Instant stuckMeasurePoint = anomalies.stream()
+                .filter(a -> a.getAnomalyType() == AnomalyType.SAGA_STUCK
+                        || a.getAnomalyType() == AnomalyType.MISSING_TERMINAL_EVENT)
+                .map(Anomaly::getDetectedAt)
+                .filter(Objects::nonNull)
+                .max(Instant::compareTo)
+                .orElse(Instant.now());
+        Instant stuckStart = events.stream()
+                .map(e -> e.getReceivedAt() != null ? e.getReceivedAt() : e.getTimestamp())
+                .filter(Objects::nonNull)
+                .filter(heard -> !heard.isAfter(stuckMeasurePoint))
+                .max(Instant::compareTo)
+                .orElse(null);
+        if (stuckStart == null) return null;
 
-            int maxTimeout = detectionProperties.getDefaultStepTimeoutSeconds();
-            if (workflow != null && workflow.getSteps() != null) {
-                maxTimeout = workflow.getSteps().stream()
-                        .mapToInt(s -> workflow.getStepTimeoutSeconds(s.getId()))
-                        .max().orElse(detectionProperties.getDefaultStepTimeoutSeconds());
-            }
-            int serviceCrashTimeoutSeconds = maxTimeout * detectionProperties.getServiceCrashTimeoutMultiplier();
+        long stuckSeconds = Duration.between(stuckStart, stuckMeasurePoint).getSeconds();
+        if (stuckSeconds <= serviceCrashTimeoutSeconds) return null;
 
-            Instant stuckMeasurePoint = anomalies.stream()
-                    .filter(a -> a.getAnomalyType() == AnomalyType.SAGA_STUCK
-                            || a.getAnomalyType() == AnomalyType.MISSING_TERMINAL_EVENT)
-                    .map(Anomaly::getDetectedAt)
-                    .filter(Objects::nonNull)
-                    .max(Instant::compareTo)
-                    .orElse(Instant.now());
-            Instant stuckStart = events.stream()
-                    .map(e -> e.getReceivedAt() != null ? e.getReceivedAt() : e.getTimestamp())
-                    .filter(Objects::nonNull)
-                    .filter(heard -> !heard.isAfter(stuckMeasurePoint))
-                    .max(Instant::compareTo)
-                    .orElse(null);
-            if (stuckStart != null) {
-                long stuckSeconds = Duration.between(stuckStart, stuckMeasurePoint).getSeconds();
-
-                if (stuckSeconds > serviceCrashTimeoutSeconds) {
-                    CandidateAssessment rr = candidate("SERVICE_CRASH",
-                            isRecovered ? "MEDIUM" : "CRITICAL", "R05",
-                            CandidateStatus.WEAK_EVIDENCE);
-                    rr.setStatusReason("Only silence was observed; whether the source crashed, "
-                            + "was unreachable, or its events were delayed is not established.");
-                    rr.getEvidence().add(evidence("Saga stuck for " + stuckSeconds + "s (>"
-                            + serviceCrashTimeoutSeconds + "s threshold)"));
-                    rr.getEvidence().add(evidence("Both SAGA_STUCK and MISSING_TERMINAL_EVENT anomalies present"));
-                    if (isRecovered) {
-                        rr.getEvidence().add(evidence("Service recovered → saga now " + saga.getStatus()));
-                    }
-                    rr.getSuggestions().add("Check if downstream service container is running");
-                    rr.getSuggestions().add("Verify docker container health and restart policy");
-                    return rr;
-                }
-            }
+        boolean isRecovered = hasEnded(saga);
+        CandidateAssessment assessment = candidate("SERVICE_CRASH",
+                isRecovered ? "MEDIUM" : "CRITICAL", "R05",
+                CandidateStatus.WEAK_EVIDENCE);
+        assessment.setStatusReason("Only silence was observed; whether the source crashed, "
+                + "was unreachable, or its events were delayed is not established.");
+        assessment.getEvidence().add(evidence("Saga stuck for " + stuckSeconds + "s (>"
+                + serviceCrashTimeoutSeconds + "s threshold)"));
+        assessment.getEvidence().add(evidence("Both SAGA_STUCK and MISSING_TERMINAL_EVENT anomalies present"));
+        if (isRecovered) {
+            assessment.getEvidence().add(evidence("Service recovered → saga now " + saga.getStatus()));
         }
-        return null;
+        assessment.getSuggestions().add("Check if downstream service container is running");
+        assessment.getSuggestions().add("Verify docker container health and restart policy");
+        return assessment;
+    }
+
+    private int longestStepTimeoutSeconds(SagaInstance saga) {
+        int fallback = detectionProperties.getDefaultStepTimeoutSeconds();
+        WorkflowSpec workflow = workflowRegistry.byType(saga.getWorkflowType()).orElse(null);
+        if (workflow == null || workflow.getSteps() == null) return fallback;
+        return workflow.getSteps().stream()
+                .mapToInt(step -> workflow.getStepTimeoutSeconds(step.getId()))
+                .max().orElse(fallback);
     }
 
     private static String totalDuration(String label, SagaInstance saga, List<SagaEvent> events) {
@@ -678,35 +675,29 @@ public class RcaService {
 
     private CandidateAssessment ruleRecoveredAfterSilence(SagaInstance saga, List<Anomaly> anomalies,
             List<SagaEvent> events) {
-        boolean hasStuck = anomalies.stream()
-                .anyMatch(a -> a.getAnomalyType() == AnomalyType.SAGA_STUCK);
-        boolean hasMissingTerminal = anomalies.stream()
-                .anyMatch(a -> a.getAnomalyType() == AnomalyType.MISSING_TERMINAL_EVENT);
-        boolean isTerminal = saga.getStatus() == SagaStatus.COMPLETED
-                || saga.getStatus() == SagaStatus.COMPENSATED
-                || saga.getStatus() == SagaStatus.FAILED;
-        boolean hasStepTimeoutBeforeRecovery = hasStepTimeoutBeforeRecovery(saga, anomalies);
+        boolean hasStuck = hasAnomaly(anomalies, AnomalyType.SAGA_STUCK);
+        boolean hasMissingTerminal = hasAnomaly(anomalies, AnomalyType.MISSING_TERMINAL_EVENT);
 
-        if (hasStuck && !hasMissingTerminal && !hasStepTimeoutBeforeRecovery && isTerminal) {
-            CandidateAssessment rr = candidate("RECOVERED_AFTER_SILENCE", "LOW", "R06",
+        if (hasStuck && !hasMissingTerminal && !hasStepTimeoutBeforeRecovery(saga, anomalies) && hasEnded(saga)) {
+            CandidateAssessment assessment = candidate("RECOVERED_AFTER_SILENCE", "LOW", "R06",
                     CandidateStatus.STRONG_EVIDENCE);
-            rr.getEvidence().add(evidence(
+            assessment.getEvidence().add(evidence(
                     "No observation arrived for this run for longer than the declared "
                             + "threshold (SAGA_STUCK)"));
-            rr.getEvidence().add(evidence(
+            assessment.getEvidence().add(evidence(
                     "The run was later observed to end → final status: " + saga.getStatus()));
             if (saga.getStartTime() != null && saga.getEndTime() != null) {
-                rr.getEvidence().add(evidence(
+                assessment.getEvidence().add(evidence(
                         totalDuration("Total duration including the silent period", saga, events)));
             }
 
-            rr.setStatusReason("Silence was observed and so was the ending. Whether the "
+            assessment.setStatusReason("Silence was observed and so was the ending. Whether the "
                     + "source recovered, was restarted, or was reachable all along while "
                     + "its events arrived late is not established by this evidence.");
-            rr.getSuggestions().add("Check whether the step's service restarted during the gap");
-            rr.getSuggestions().add("Compare event time against receive time to see whether "
+            assessment.getSuggestions().add("Check whether the step's service restarted during the gap");
+            assessment.getSuggestions().add("Compare event time against receive time to see whether "
                     + "the delay was in the source or in delivery");
-            return rr;
+            return assessment;
         }
         return null;
     }
@@ -726,28 +717,27 @@ public class RcaService {
             List<SagaEvent> events, List<Anomaly> anomalies) {
         List<SagaEvent> started = compensationEvents(workflow, events, WorkflowSpec.EventRole.Role.STARTED);
         boolean completed = !compensationEvents(workflow, events, WorkflowSpec.EventRole.Role.COMPLETED).isEmpty();
-        boolean hasMissingCompAck = anomalies.stream()
-                .anyMatch(a -> a.getAnomalyType() == AnomalyType.MISSING_COMPENSATION_ACK);
+        boolean hasMissingCompAck = hasAnomaly(anomalies, AnomalyType.MISSING_COMPENSATION_ACK);
 
         if (!started.isEmpty() && !completed
                 && (saga.getStatus() == SagaStatus.COMPENSATING || hasMissingCompAck)) {
-            CandidateAssessment rr = candidate("COMPENSATION_STEP_FAILURE", "HIGH", "R10",
+            CandidateAssessment assessment = candidate("COMPENSATION_STEP_FAILURE", "HIGH", "R10",
                     CandidateStatus.STRONG_EVIDENCE);
             String startedTypes = eventTypes(started);
 
-            rr.getEvidence().add(Evidence.of(
+            assessment.getEvidence().add(Evidence.of(
                     "Compensation started (" + startedTypes + ") but never acknowledged",
                     null, "the compensation reports its declared completion event", null,
                     eventIds(started)));
-            rr.getEvidence().add(evidence("Saga status: " + saga.getStatus()));
+            assessment.getEvidence().add(evidence("Saga status: " + saga.getStatus()));
 
             if (!hasMissingCompAck) {
-                rr.setStatus(CandidateStatus.WEAK_EVIDENCE);
-                rr.setStatusReason("No acknowledgement deadline has elapsed yet; the compensation may still be in flight.");
+                assessment.setStatus(CandidateStatus.WEAK_EVIDENCE);
+                assessment.setStatusReason("No acknowledgement deadline has elapsed yet; the compensation may still be in flight.");
             }
-            rr.getSuggestions().add("Check the compensating service's logs");
-            rr.getSuggestions().add("Verify broker connectivity for the compensation topic");
-            return rr;
+            assessment.getSuggestions().add("Check the compensating service's logs");
+            assessment.getSuggestions().add("Verify broker connectivity for the compensation topic");
+            return assessment;
         }
         return null;
     }
@@ -762,16 +752,16 @@ public class RcaService {
                     .filter(role -> role.role() == WorkflowSpec.EventRole.Role.FAILED)
                     .isPresent();
             if (!isFailure) continue;
-            CandidateAssessment rr = candidate("STEP_REPORTED_FAILURE", "MEDIUM", "R24",
+            CandidateAssessment assessment = candidate("STEP_REPORTED_FAILURE", "MEDIUM", "R24",
                     CandidateStatus.STRONG_EVIDENCE);
-            rr.getEvidence().add(Evidence.ofEvent(
+            assessment.getEvidence().add(Evidence.ofEvent(
                     event.getEventType() + " is the failure event this workflow declares for its step",
                     event.getPayload(), "the step reports its declared completion event",
                     event.getEventId()));
-            rr.setStatusReason("The step reported failure. The event carries no reason, so "
+            assessment.setStatusReason("The step reported failure. The event carries no reason, so "
                     + "why it failed is not established by this evidence.");
-            rr.getSuggestions().add("Check the failing step's own business rule and data");
-            return rr;
+            assessment.getSuggestions().add("Check the failing step's own business rule and data");
+            return assessment;
         }
         return null;
     }
@@ -784,85 +774,76 @@ public class RcaService {
         Optional<SagaEvent> forwardFailure = forwardFailures(workflow, events).stream().findFirst();
         if (saga.getStatus() == SagaStatus.COMPENSATED && !started.isEmpty() && !completed.isEmpty()
                 && forwardFailure.isPresent()) {
-            CandidateAssessment rr = candidate("FORWARD_STEP_FAILURE", "LOW", "R11",
+            CandidateAssessment assessment = candidate("FORWARD_STEP_FAILURE", "LOW", "R11",
                     CandidateStatus.STRONG_EVIDENCE);
 
             forwardFailure.ifPresent(failed ->
-                    rr.getEvidence().add(Evidence.ofEvent(
+                    assessment.getEvidence().add(Evidence.ofEvent(
                             failed.getEventType() + " is the forward step's declared failure",
                             null, "the step reports its declared completion event",
                             failed.getEventId())));
-            rr.getEvidence().add(Evidence.of("Compensation completed: "
+            assessment.getEvidence().add(Evidence.of("Compensation completed: "
                     + eventTypes(started) + " -> " + eventTypes(completed), null, null, null,
                     eventIds(completed)));
-            rr.getEvidence().add(evidence("Saga status: COMPENSATED"));
+            assessment.getEvidence().add(evidence("Saga status: COMPENSATED"));
             if (saga.getStartTime() != null && saga.getEndTime() != null) {
-                rr.getEvidence().add(evidence(
+                assessment.getEvidence().add(evidence(
                         totalDuration("Total duration (including compensation)", saga, events)));
             }
-            rr.getSuggestions().add("Saga rolled back correctly");
-            rr.getSuggestions().add("Review why the forward step failed to prevent recurrence");
-            return rr;
+            assessment.getSuggestions().add("Saga rolled back correctly");
+            assessment.getSuggestions().add("Review why the forward step failed to prevent recurrence");
+            return assessment;
         }
         return null;
     }
 
     private CandidateAssessment ruleOutOfOrderDelivery(SagaInstance saga, List<Anomaly> anomalies) {
-        boolean isTerminal = saga.getStatus() == SagaStatus.COMPLETED
-                || saga.getStatus() == SagaStatus.COMPENSATED;
-        for (Anomaly a : anomalies) {
-            if (a.getAnomalyType() == AnomalyType.OUT_OF_ORDER) {
-                CandidateAssessment rr = candidate("OUT_OF_ORDER_DELIVERY",
-                        isTerminal ? "LOW" : "MEDIUM", "R14",
-                        CandidateStatus.STRONG_EVIDENCE);
-                rr.setSubject(ClaimSubject.OBSERVATION_PROCESS);
-                rr.getEvidence().add(evidence(a));
-                if (isTerminal) {
-                    rr.getEvidence().add(evidence("Saga completed despite out-of-order events"));
-                } else {
-                    rr.getEvidence().add(evidence("Saga still in " + saga.getStatus() + " status"));
-                }
+        Anomaly outOfOrder = firstOfType(anomalies, AnomalyType.OUT_OF_ORDER);
+        if (outOfOrder == null) return null;
 
-                rr.getSuggestions().add("Nothing indicated in the source: this is the order the observer "
-                        + "read the events in, and Kafka does not order separate topics against each other");
-                rr.getSuggestions().add("Read the run by event time, not by arrival");
-                return rr;
-            }
+        boolean endedWithoutFailure = saga.getStatus() == SagaStatus.COMPLETED
+                || saga.getStatus() == SagaStatus.COMPENSATED;
+        CandidateAssessment assessment = candidate("OUT_OF_ORDER_DELIVERY",
+                endedWithoutFailure ? "LOW" : "MEDIUM", "R14",
+                CandidateStatus.STRONG_EVIDENCE);
+        assessment.setSubject(ClaimSubject.OBSERVATION_PROCESS);
+        assessment.getEvidence().add(evidence(outOfOrder));
+        if (endedWithoutFailure) {
+            assessment.getEvidence().add(evidence("Saga completed despite out-of-order events"));
+        } else {
+            assessment.getEvidence().add(evidence("Saga still in " + saga.getStatus() + " status"));
         }
-        return null;
+        assessment.getSuggestions().add("Nothing indicated in the source: this is the order the observer "
+                + "read the events in, and Kafka does not order separate topics against each other");
+        assessment.getSuggestions().add("Read the run by event time, not by arrival");
+        return assessment;
     }
 
     private CandidateAssessment ruleObservabilityGap(List<Anomaly> anomalies) {
         if (!anomalies.isEmpty()) {
-            CandidateAssessment rr = candidate("OBSERVABILITY_GAP", "LOW", "R20",
+            CandidateAssessment assessment = candidate("OBSERVABILITY_GAP", "LOW", "R20",
                     CandidateStatus.WEAK_EVIDENCE);
-            rr.getEvidence().add(evidence("Anomalies detected but insufficient evidence to determine root cause"));
-            rr.getEvidence().add(evidence("Anomaly types: " + anomalies.stream()
+            assessment.getEvidence().add(evidence("Anomalies detected but insufficient evidence to determine root cause"));
+            assessment.getEvidence().add(evidence("Anomaly types: " + anomalies.stream()
                     .map(a -> a.getAnomalyType().name())
                     .distinct()
                     .collect(Collectors.joining(", "))));
-            rr.getSuggestions().add("Add more telemetry sources for better RCA");
-            rr.getSuggestions().add("Check if Jaeger/logs provide additional context");
-            return rr;
+            assessment.getSuggestions().add("Add more telemetry sources for better RCA");
+            assessment.getSuggestions().add("Check if Jaeger/logs provide additional context");
+            return assessment;
         }
         return null;
     }
 
     private CandidateAssessment ruleStuckUnknownCause(SagaInstance saga, List<Anomaly> anomalies) {
-        boolean hasStuck = anomalies.stream()
-                .anyMatch(a -> a.getAnomalyType() == AnomalyType.SAGA_STUCK);
-        boolean isNonTerminal = saga.getStatus() != SagaStatus.COMPLETED
-                && saga.getStatus() != SagaStatus.COMPENSATED
-                && saga.getStatus() != SagaStatus.FAILED;
-
-        if (hasStuck && isNonTerminal) {
-            CandidateAssessment rr = candidate("STUCK_UNKNOWN_CAUSE", "HIGH", "R21",
+        if (hasAnomaly(anomalies, AnomalyType.SAGA_STUCK) && !hasEnded(saga)) {
+            CandidateAssessment assessment = candidate("STUCK_UNKNOWN_CAUSE", "HIGH", "R21",
                     CandidateStatus.WEAK_EVIDENCE);
-            rr.getEvidence().add(evidence("Saga stuck in " + saga.getStatus() + " status"));
-            rr.getEvidence().add(evidence("No specific root cause identified — insufficient evidence"));
-            rr.getSuggestions().add("Check all downstream service health");
-            rr.getSuggestions().add("Verify Kafka consumer group offsets");
-            return rr;
+            assessment.getEvidence().add(evidence("Saga stuck in " + saga.getStatus() + " status"));
+            assessment.getEvidence().add(evidence("No specific root cause identified — insufficient evidence"));
+            assessment.getSuggestions().add("Check all downstream service health");
+            assessment.getSuggestions().add("Verify Kafka consumer group offsets");
+            return assessment;
         }
         return null;
     }
@@ -949,14 +930,6 @@ public class RcaService {
                     position, precededBy, factSummary));
             suggestions.addAll(candidate.getSuggestions());
         }
-    }
-
-    private int statusRank(CandidateStatus status) {
-        if (status == CandidateStatus.STRONG_EVIDENCE) return 0;
-        if (status == CandidateStatus.SUPPORTING_EVIDENCE) return 1;
-        if (status == CandidateStatus.WEAK_EVIDENCE) return 2;
-        if (status == CandidateStatus.RULED_OUT) return 3;
-        return 4;
     }
 
     private List<String> evidenceFacts(RcaCandidate candidate) {
