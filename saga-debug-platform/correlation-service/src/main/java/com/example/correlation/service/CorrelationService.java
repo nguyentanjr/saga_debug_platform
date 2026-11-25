@@ -69,19 +69,7 @@ public class CorrelationService {
         Optional<SagaEvent> alreadyStored = sagaEventRepository.findBySourceNameAndEventId(
                 observation.sourceName(), eventId);
         if (alreadyStored.isPresent()) {
-            String storedOn = alreadyStored.get().getTransportRef();
-            String arrivedOn = observation.transportRef();
-
-            if (storedOn != null && storedOn.equals(arrivedOn)) {
-                log.info("Re-read of stored event {} for saga {} on the same record {}; "
-                                + "observer-side replay, not a duplicate delivery.",
-                        eventId, sagaId, storedOn);
-                return;
-            }
-
-            log.info("Duplicate event {} for saga {} (DB hit). Skipping.", eventId, sagaId);
-            anomalyDetectionService.detectDuplicateEvent(sagaId, eventId, eventType,
-                    storedOn, arrivedOn);
+            handleAlreadyStored(observation, alreadyStored.get());
             return;
         }
 
@@ -97,28 +85,12 @@ public class CorrelationService {
                 .orElse(null);
 
         if (saga == null) {
-            saga = new SagaInstance();
-            saga.setSagaId(sagaId);
-
-            saga.setSourceName(observation.sourceName());
-            saga.setStatus(SagaStatus.STARTED);
-            saga.setStartTime(eventTimestamp);
-            saga.setLastUpdated(eventTimestamp);
-            if (workflow != null) {
-                saga.setWorkflowType(workflow.getName());
-            }
-
-            saga.setOrderId(observation.businessKey());
-            log.info("New saga detected: {} (workflow={})", sagaId, saga.getWorkflowType());
+            saga = newSagaInstance(observation, workflow);
         } else {
             adoptWorkflowIfNowKnown(saga, workflow, eventType);
         }
 
-        saga.recordWorkflowConflict(workflowRegistry.resolveFromEvidence(
-                observation.declaredWorkflow(), observation.sourceName(), eventType)
-                .map(WorkflowSpec::getName).orElse(null));
-        saga.recordWorkflowConflict(workflowRegistry.byType(observation.declaredWorkflow())
-                .map(WorkflowSpec::getName).orElse(null));
+        recordWorkflowConflicts(saga, observation);
         if (saga.hasWorkflowConflict()) {
             log.error("Execution {} has conflicting workflows {}; withholding workflow conclusions",
                     sagaId, saga.getWorkflowConflicts());
@@ -134,15 +106,7 @@ public class CorrelationService {
         SagaStatus newStatus = timeline.status();
         saga.setStatus(newStatus);
 
-        Instant earliest = timeline.startedAt().orElse(eventTimestamp);
-        if (saga.getStartTime() == null || earliest.isBefore(saga.getStartTime())) {
-            saga.setStartTime(earliest);
-        }
-        Instant latest = timeline.lastEventAt().orElse(eventTimestamp);
-        if (saga.getLastUpdated() == null || latest.isAfter(saga.getLastUpdated())) {
-            saga.setLastUpdated(latest);
-        }
-
+        widenTimeRange(saga, timeline, eventTimestamp);
         saga.setEndTime(timeline.endedAt().orElse(null));
 
         sagaInstanceRepository.save(saga);
@@ -152,6 +116,11 @@ public class CorrelationService {
 
         if (saga.hasWorkflowConflict()) return;
 
+        runDetectors(workflow, sagaId, newStatus, timeline, allEvents);
+    }
+
+    private void runDetectors(WorkflowSpec workflow, String sagaId, SagaStatus newStatus,
+            EvidenceTimeline timeline, List<SagaEvent> allEvents) {
         if (timeline.endedAt().isPresent()) {
             anomalyDetectionService.withdrawMissingTerminal(sagaId, newStatus);
         }
@@ -181,6 +150,58 @@ public class CorrelationService {
         anomalyDetectionService.withdrawDisprovenSilence(workflow, sagaId, sagaEvents);
 
         judgeTransitions(workflow, sagaId, timeline);
+    }
+
+    private void handleAlreadyStored(IngestedEvent observation, SagaEvent stored) {
+        String eventId = observation.eventId();
+        String sagaId = observation.sagaId();
+        String storedOn = stored.getTransportRef();
+        String arrivedOn = observation.transportRef();
+
+        if (storedOn != null && storedOn.equals(arrivedOn)) {
+            log.info("Re-read of stored event {} for saga {} on the same record {}; "
+                            + "observer-side replay, not a duplicate delivery.",
+                    eventId, sagaId, storedOn);
+            return;
+        }
+
+        log.info("Duplicate event {} for saga {} (DB hit). Skipping.", eventId, sagaId);
+        anomalyDetectionService.detectDuplicateEvent(sagaId, eventId, observation.eventType(),
+                storedOn, arrivedOn);
+    }
+
+    private static SagaInstance newSagaInstance(IngestedEvent observation, WorkflowSpec workflow) {
+        SagaInstance saga = new SagaInstance();
+        saga.setSagaId(observation.sagaId());
+        saga.setSourceName(observation.sourceName());
+        saga.setStatus(SagaStatus.STARTED);
+        saga.setStartTime(observation.eventTime());
+        saga.setLastUpdated(observation.eventTime());
+        if (workflow != null) {
+            saga.setWorkflowType(workflow.getName());
+        }
+        saga.setOrderId(observation.businessKey());
+        log.info("New saga detected: {} (workflow={})", observation.sagaId(), saga.getWorkflowType());
+        return saga;
+    }
+
+    private void recordWorkflowConflicts(SagaInstance saga, IngestedEvent observation) {
+        saga.recordWorkflowConflict(workflowRegistry.resolveFromEvidence(
+                observation.declaredWorkflow(), observation.sourceName(), observation.eventType())
+                .map(WorkflowSpec::getName).orElse(null));
+        saga.recordWorkflowConflict(workflowRegistry.byType(observation.declaredWorkflow())
+                .map(WorkflowSpec::getName).orElse(null));
+    }
+
+    private static void widenTimeRange(SagaInstance saga, EvidenceTimeline timeline, Instant fallback) {
+        Instant earliest = timeline.startedAt().orElse(fallback);
+        if (saga.getStartTime() == null || earliest.isBefore(saga.getStartTime())) {
+            saga.setStartTime(earliest);
+        }
+        Instant latest = timeline.lastEventAt().orElse(fallback);
+        if (saga.getLastUpdated() == null || latest.isAfter(saga.getLastUpdated())) {
+            saga.setLastUpdated(latest);
+        }
     }
 
     private void judgeTransitions(WorkflowSpec workflow, String sagaId, EvidenceTimeline timeline) {
