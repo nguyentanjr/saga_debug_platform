@@ -1,5 +1,6 @@
 package com.example.correlation.service;
 
+import com.example.correlation.domain.SagaInstance;
 import com.example.correlation.domain.SagaStatus;
 import com.example.correlation.repository.AnomalyRepository;
 import com.example.correlation.repository.RcaResultRepository;
@@ -66,7 +67,7 @@ public class RetentionService {
                         PageRequest.of(0, properties.getBatchSize(),
                                 Sort.by(Sort.Direction.ASC, "lastUpdated")))
                 .stream()
-                .map(saga -> saga.getSagaId())
+                .map(SagaInstance::getSagaId)
                 .toList();
 
         if (expired.isEmpty()) {

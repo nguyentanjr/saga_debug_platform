@@ -20,11 +20,13 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -82,7 +84,7 @@ public class DashboardMetricsService {
                 countStatusSince(SagaStatus.COMPENSATED, since),
                 activeSagas,
                 anomalies.size(),
-                countEvidenceAvailable(rcaResults),
+                countRcaStatus(rcaResults, RcaStatus.EVIDENCE_AVAILABLE),
                 countRcaStatus(rcaResults, RcaStatus.INSUFFICIENT_EVIDENCE),
                 countRcaStatus(rcaResults, RcaStatus.NO_DIAGNOSIS_NEEDED),
                 topAnomalyTypes(anomalies),
@@ -100,12 +102,6 @@ public class DashboardMetricsService {
                 .count();
     }
 
-    private long countEvidenceAvailable(List<RcaResult> rcaResults) {
-        return rcaResults.stream()
-                .filter(result -> result.getRcaStatus() == RcaStatus.EVIDENCE_AVAILABLE)
-                .count();
-    }
-
     private List<MetricItem> topAnomalyTypes(List<Anomaly> anomalies) {
         Map<String, Long> counts = new LinkedHashMap<>();
         for (Anomaly anomaly : anomalies) {
@@ -117,16 +113,10 @@ public class DashboardMetricsService {
     private List<MetricItem> topRootCauses(List<RcaResult> results) {
         Map<String, Long> counts = new LinkedHashMap<>();
         for (RcaResult result : results) {
-            if (result.getRcaStatus() != RcaStatus.EVIDENCE_AVAILABLE) {
-                continue;
-            }
+            if (result.getRcaStatus() != RcaStatus.EVIDENCE_AVAILABLE) continue;
+
             List<String> roots = concreteEvidenceRootCauses(result);
-            if (roots.isEmpty()) {
-                if (result.getRootCause() != null && !result.getRootCause().isBlank()) {
-                    counts.merge(result.getRootCause(), 1L, Long::sum);
-                }
-                continue;
-            }
+            if (roots.isEmpty()) roots = Collections.singletonList(result.getRootCause());
             for (String root : roots) {
                 if (root != null && !root.isBlank()) {
                     counts.merge(root, 1L, Long::sum);
@@ -186,10 +176,10 @@ public class DashboardMetricsService {
         List<String> cited = anomaly.getEvidenceEventIds() != null ? anomaly.getEvidenceEventIds() : List.of();
         Set<String> steps = cited.stream()
                 .map(eventsById::get)
-                .filter(java.util.Objects::nonNull)
+                .filter(Objects::nonNull)
                 .map(e -> workflow.classifyEvent(e.getEventType())
                         .map(WorkflowSpec.EventRole::stepId).orElse(null))
-                .filter(java.util.Objects::nonNull)
+                .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
         return steps.size() == 1 ? Optional.of(steps.iterator().next()) : Optional.empty();
     }
