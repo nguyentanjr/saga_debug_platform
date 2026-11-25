@@ -395,33 +395,27 @@ public class WorkflowSpec {
         return false;
     }
 
+    private static final int DEFAULT_STEP_TIMEOUT_SECONDS = 30;
+
     public int getStepTimeoutSeconds(String stepId) {
-        if (steps != null) {
-            for (StepSpec step : steps) {
-                if (step.getId().equals(stepId)) {
-                    return parseTimeout(step.getTimeout());
-                }
+        for (StepSpec step : allSteps()) {
+            if (step.getId().equals(stepId)) {
+                return parseTimeoutSeconds(step.getTimeout());
             }
         }
-        if (compensationSteps != null) {
-            for (StepSpec step : compensationSteps) {
-                if (step.getId().equals(stepId)) {
-                    return parseTimeout(step.getTimeout());
-                }
-            }
-        }
-        return 30;
+        return DEFAULT_STEP_TIMEOUT_SECONDS;
     }
 
-    private int parseTimeout(String timeout) {
-        if (timeout == null) return 30;
-        timeout = timeout.trim().toLowerCase();
-        if (timeout.endsWith("s")) {
-            return Integer.parseInt(timeout.replace("s", ""));
-        } else if (timeout.endsWith("m")) {
-            return Integer.parseInt(timeout.replace("m", "")) * 60;
+    private static int parseTimeoutSeconds(String timeout) {
+        if (timeout == null) return DEFAULT_STEP_TIMEOUT_SECONDS;
+        String normalized = timeout.trim().toLowerCase();
+        if (normalized.endsWith("s")) {
+            return Integer.parseInt(normalized.replace("s", ""));
         }
-        return 30;
+        if (normalized.endsWith("m")) {
+            return Integer.parseInt(normalized.replace("m", "")) * 60;
+        }
+        return DEFAULT_STEP_TIMEOUT_SECONDS;
     }
 
     public Set<String> retryEventTypes() {
@@ -532,16 +526,23 @@ public class WorkflowSpec {
     }
 
     public List<String> stepsAwaitedAfter(String eventType) {
-        Optional<EventRole> role = classifyEvent(eventType);
-        if (role.isEmpty()) return List.of();
-        EventRole r = role.get();
-        if (r.role() == EventRole.Role.STARTED || r.role() == EventRole.Role.RETRY) {
-            return List.of(r.stepId());
+        Optional<EventRole> classified = classifyEvent(eventType);
+        if (classified.isEmpty()) return List.of();
+
+        EventRole event = classified.get();
+        boolean stepStillRunning = event.role() == EventRole.Role.STARTED || event.role() == EventRole.Role.RETRY;
+        if (stepStillRunning) return List.of(event.stepId());
+
+        String condition;
+        if (event.outcome() != null) {
+            condition = event.outcome();
+        } else if (event.role() == EventRole.Role.FAILED) {
+            condition = FAILED_OUTCOME;
+        } else {
+            condition = SUCCESS_OUTCOME;
         }
-        String condition = r.outcome() != null ? r.outcome()
-                : r.role() == EventRole.Role.FAILED ? "FAILED" : SUCCESS_OUTCOME;
         Set<String> stepIds = allSteps().stream().map(StepSpec::getId).collect(Collectors.toSet());
-        return outgoingTargets(r.stepId(), condition).stream().filter(stepIds::contains).toList();
+        return outgoingTargets(event.stepId(), condition).stream().filter(stepIds::contains).toList();
     }
 
     private List<String> outgoingTargets(String stepId, String condition) {
