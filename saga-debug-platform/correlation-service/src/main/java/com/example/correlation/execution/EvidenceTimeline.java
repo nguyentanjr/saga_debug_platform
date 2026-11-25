@@ -7,9 +7,14 @@ import com.example.correlation.workflow.WorkflowSpec.EventRole;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -52,17 +57,17 @@ public final class EvidenceTimeline {
     }
 
     private static final class Causality {
-        private final java.util.Map<String, SagaEvent> byId = new java.util.HashMap<>();
-        private final java.util.Map<SagaEvent, Instant> at = new java.util.IdentityHashMap<>();
-        private final java.util.Map<SagaEvent, Integer> depth = new java.util.IdentityHashMap<>();
-        private final java.util.Map<SagaEvent, SagaEvent> stepStart = new java.util.IdentityHashMap<>();
+        private final Map<String, SagaEvent> byId = new HashMap<>();
+        private final Map<SagaEvent, Instant> at = new IdentityHashMap<>();
+        private final Map<SagaEvent, Integer> depth = new IdentityHashMap<>();
+        private final Map<SagaEvent, SagaEvent> stepStart = new IdentityHashMap<>();
 
         Causality(WorkflowSpec spec, List<SagaEvent> events) {
             for (SagaEvent e : events) {
                 if (e.getEventId() != null) byId.putIfAbsent(e.getEventId(), e);
             }
             if (spec != null) {
-                java.util.Map<String, List<SagaEvent>> startsByStep = new java.util.HashMap<>();
+                Map<String, List<SagaEvent>> startsByStep = new HashMap<>();
                 for (SagaEvent e : events) {
                     spec.classifyEvent(e.getEventType())
                             .filter(role -> role.role() == EventRole.Role.STARTED)
@@ -76,7 +81,7 @@ public final class EvidenceTimeline {
                             .ifPresent(starts -> stepStart.put(e, starts.get(0)));
                 }
             }
-            for (SagaEvent e : events) resolve(e, new java.util.HashSet<>());
+            for (SagaEvent e : events) resolve(e, new HashSet<>());
         }
 
         private SagaEvent causeOf(SagaEvent e) {
@@ -97,10 +102,14 @@ public final class EvidenceTimeline {
                 return;
             }
             resolve(cause, visiting);
-            Instant own = e.getTimestamp();
-            Instant causeAt = at.get(cause);
-            at.put(e, own == null ? causeAt : causeAt == null || own.isAfter(causeAt) ? own : causeAt);
+            at.put(e, notBefore(e.getTimestamp(), at.get(cause)));
             depth.put(e, depth.getOrDefault(cause, 0) + 1);
+        }
+
+        private static Instant notBefore(Instant own, Instant causeAt) {
+            if (own == null) return causeAt;
+            if (causeAt == null || own.isAfter(causeAt)) return own;
+            return causeAt;
         }
 
         Instant at(SagaEvent e) {
@@ -112,7 +121,7 @@ public final class EvidenceTimeline {
         }
 
         boolean isAncestor(SagaEvent ancestor, SagaEvent event) {
-            Set<SagaEvent> seen = new java.util.HashSet<>();
+            Set<SagaEvent> seen = new HashSet<>();
             for (SagaEvent cur = causeOf(event); cur != null && seen.add(cur); cur = causeOf(cur)) {
                 if (cur == ancestor) return true;
             }
@@ -132,7 +141,7 @@ public final class EvidenceTimeline {
         List<SagaEvent> ordered = new ArrayList<>(given);
         ordered.sort(businessOrder(spec, causality));
 
-        Set<SagaEvent> superseded = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        Set<SagaEvent> superseded = Collections.newSetFromMap(new IdentityHashMap<>());
         List<Bearing> bearings = bearingsOf(spec, ordered, superseded);
 
         if (bearings.isEmpty()) {
@@ -253,29 +262,34 @@ public final class EvidenceTimeline {
         boolean compensating = false;
         List<Bearing> bearings = new ArrayList<>();
         for (SagaEvent event : ordered) {
-            Optional<EventRole> role = spec.classifyEvent(event.getEventType());
-            Optional<SagaStatus> alone = role.flatMap(spec::statusAfter);
-            if (role.isEmpty()) continue;
-            String step = role.get().stepId();
+            Optional<EventRole> classified = spec.classifyEvent(event.getEventType());
+            if (classified.isEmpty()) continue;
+
+            EventRole role = classified.get();
+            String step = role.stepId();
+            Optional<SagaStatus> statusAfter = spec.statusAfter(role);
             if (spec.isCompensationStep(step)) {
-                if (role.get().role() == EventRole.Role.STARTED) compensationsStarted.add(step);
-                if (role.get().role() == EventRole.Role.COMPLETED) compensationsDone.add(step);
+                if (role.role() == EventRole.Role.STARTED) compensationsStarted.add(step);
+                if (role.role() == EventRole.Role.COMPLETED) compensationsDone.add(step);
                 compensating = true;
-                if (alone.orElse(null) == SagaStatus.COMPENSATED) {
-                    Set<String> open = new LinkedHashSet<>(compensationsStarted);
-                    open.addAll(owed);
-                    open.removeAll(compensationsDone);
-                    alone = Optional.of(open.isEmpty() ? SagaStatus.COMPENSATED : SagaStatus.COMPENSATING);
+                if (statusAfter.orElse(null) == SagaStatus.COMPENSATED) {
+                    Set<String> stillOpen = new LinkedHashSet<>(compensationsStarted);
+                    stillOpen.addAll(owed);
+                    stillOpen.removeAll(compensationsDone);
+                    statusAfter = Optional.of(stillOpen.isEmpty() ? SagaStatus.COMPENSATED : SagaStatus.COMPENSATING);
                 }
             } else {
-                if (role.get().role() == EventRole.Role.COMPLETED) {
+                if (role.role() == EventRole.Role.COMPLETED) {
                     spec.compensationOf(step).ifPresent(owed::add);
                 }
 
                 boolean ended = !bearings.isEmpty() && bearings.get(bearings.size() - 1).status().isTerminal();
-                if (compensating && !ended) { superseded.add(event); continue; }
+                if (compensating && !ended) {
+                    superseded.add(event);
+                    continue;
+                }
             }
-            alone.ifPresent(status -> bearings.add(new Bearing(event, status)));
+            statusAfter.ifPresent(status -> bearings.add(new Bearing(event, status)));
         }
         return bearings;
     }
@@ -352,12 +366,13 @@ public final class EvidenceTimeline {
         String step = endRole.get().stepId();
         if (!spec.isCompensationStep(step) || !step.equals(lateRole.get().stepId())
                 || lateRole.get().role() != EventRole.Role.COMPLETED) return false;
-        long starts = 0, completions = 0;
-        for (SagaEvent e : ordered) {
-            Optional<EventRole> r = spec.classifyEvent(e.getEventType());
-            if (r.isEmpty() || !step.equals(r.get().stepId())) continue;
-            if (r.get().role() == EventRole.Role.STARTED) starts++;
-            if (r.get().role() == EventRole.Role.COMPLETED) completions++;
+        long starts = 0;
+        long completions = 0;
+        for (SagaEvent event : ordered) {
+            Optional<EventRole> role = spec.classifyEvent(event.getEventType());
+            if (role.isEmpty() || !step.equals(role.get().stepId())) continue;
+            if (role.get().role() == EventRole.Role.STARTED) starts++;
+            if (role.get().role() == EventRole.Role.COMPLETED) completions++;
         }
         return completions <= starts;
     }
