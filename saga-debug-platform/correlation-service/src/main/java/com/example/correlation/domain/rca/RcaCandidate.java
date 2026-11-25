@@ -2,6 +2,7 @@ package com.example.correlation.domain.rca;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -19,7 +20,7 @@ public class RcaCandidate {
 
     private String anchorStepId;
 
-    private java.time.Instant anchorAt;
+    private Instant anchorAt;
 
     private List<String> precededBy = new ArrayList<>();
 
@@ -64,8 +65,8 @@ public class RcaCandidate {
     public String getAnchorStepId() { return anchorStepId; }
     public void setAnchorStepId(String anchorStepId) { this.anchorStepId = anchorStepId; }
 
-    public java.time.Instant getAnchorAt() { return anchorAt; }
-    public void setAnchorAt(java.time.Instant anchorAt) { this.anchorAt = anchorAt; }
+    public Instant getAnchorAt() { return anchorAt; }
+    public void setAnchorAt(Instant anchorAt) { this.anchorAt = anchorAt; }
 
     public List<String> getPrecededBy() { return precededBy; }
     public void setPrecededBy(List<String> precededBy) {

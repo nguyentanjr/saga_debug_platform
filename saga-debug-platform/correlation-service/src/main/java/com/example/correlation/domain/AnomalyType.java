@@ -1,5 +1,9 @@
 package com.example.correlation.domain;
 
+import java.util.Arrays;
+import java.util.Set;
+import java.util.stream.Collectors;
+
 public enum AnomalyType {
     SAGA_STUCK(Claim.ABSENCE),
     STEP_TIMEOUT(Claim.OCCURRENCE),
@@ -48,9 +52,9 @@ public enum AnomalyType {
         return claim == Claim.ABSENCE;
     }
 
-    public static java.util.Set<AnomalyType> absenceClaims() {
-        return java.util.Arrays.stream(values())
+    public static Set<AnomalyType> absenceClaims() {
+        return Arrays.stream(values())
                 .filter(AnomalyType::assertsAbsence)
-                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+                .collect(Collectors.toUnmodifiableSet());
     }
 }

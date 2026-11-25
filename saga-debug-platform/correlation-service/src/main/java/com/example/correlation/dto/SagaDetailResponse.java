@@ -4,6 +4,7 @@ import com.example.correlation.domain.*;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 public class SagaDetailResponse {
     private String sagaId;
@@ -14,9 +15,9 @@ public class SagaDetailResponse {
     private String workflowType;
     private List<String> workflowConflicts = List.of();
 
-    private java.util.Map<String, String> workflowSteps = java.util.Map.of();
-    public java.util.Map<String, String> getWorkflowSteps() { return workflowSteps; }
-    public void setWorkflowSteps(java.util.Map<String, String> steps) { workflowSteps = steps; }
+    private Map<String, String> workflowSteps = Map.of();
+    public Map<String, String> getWorkflowSteps() { return workflowSteps; }
+    public void setWorkflowSteps(Map<String, String> steps) { workflowSteps = steps; }
     public List<String> getWorkflowConflicts() { return workflowConflicts; }
     public void setWorkflowConflicts(List<String> conflicts) { workflowConflicts = conflicts; }
     private SagaStatus status;
