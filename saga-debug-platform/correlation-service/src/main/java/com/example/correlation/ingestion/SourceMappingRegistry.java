@@ -1,6 +1,7 @@
 package com.example.correlation.ingestion;
 
 import com.example.correlation.config.DeclarationFiles;
+import com.example.correlation.domain.ExecutionKey;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import jakarta.annotation.PostConstruct;
@@ -16,6 +17,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @Component
 public class SourceMappingRegistry {
@@ -58,11 +60,11 @@ public class SourceMappingRegistry {
             log.error("Source mapping {} has no name; ignored", filename);
             return;
         }
-        if (mapping.systemName().contains(com.example.correlation.domain.ExecutionKey.SEPARATOR)) {
+        if (mapping.systemName().contains(ExecutionKey.SEPARATOR)) {
             log.error("Source mapping '{}' observes system '{}', which contains '{}' — "
                             + "that sequence is reserved for namespacing; ignored",
                     mapping.getName(), mapping.systemName(),
-                    com.example.correlation.domain.ExecutionKey.SEPARATOR);
+                    ExecutionKey.SEPARATOR);
             return;
         }
         if (mapping.getTopicPattern() == null) {
@@ -119,7 +121,7 @@ public class SourceMappingRegistry {
     public Set<String> observedSystems() {
         return mappings.stream()
                 .map(SourceMapping::systemName)
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     public Set<String> knownSourceNames() {

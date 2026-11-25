@@ -6,6 +6,7 @@ import com.example.correlation.domain.IngestedEvent;
 import com.example.correlation.messaging.EventTimeResolver;
 import com.example.correlation.service.CorrelationService;
 import com.example.correlation.service.DeduplicationCache;
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -58,7 +59,7 @@ public class EventIngestionService {
         JsonNode payload;
         try {
             payload = objectMapper.reader()
-                    .without(com.fasterxml.jackson.core.JsonParser.Feature.INCLUDE_SOURCE_IN_LOCATION)
+                    .without(JsonParser.Feature.INCLUDE_SOURCE_IN_LOCATION)
                     .readTree(raw.payload());
         } catch (Exception e) {
             log.error("Discarding unreadable observation from {}: {}",

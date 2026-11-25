@@ -72,16 +72,13 @@ public class SourceMappingInferrer {
         Map<String, FieldProposal> fields = new LinkedHashMap<>();
         Set<String> taken = new LinkedHashSet<>();
 
-        inferEventTime(stats, taken).ifPresent(p -> { fields.put("eventTime", p); taken.add(p.path()); });
-        inferEventId(stats, sample.size(), taken).ifPresent(p -> { fields.put("eventId", p); taken.add(p.path()); });
-        inferCausationId(stats, fields, taken).ifPresent(p -> { fields.put("causationId", p); taken.add(p.path()); });
-        inferExecutionId(stats, sample.size(), taken).ifPresent(p -> { fields.put("executionId", p); taken.add(p.path()); });
-        inferByCardinalityAndName(stats, taken, TYPE_HINTS, "eventType")
-                .ifPresent(p -> { fields.put("eventType", p); taken.add(p.path()); });
-        inferByCardinalityAndName(stats, taken, SERVICE_HINTS, "serviceName")
-                .ifPresent(p -> { fields.put("serviceName", p); taken.add(p.path()); });
-        inferByCardinalityAndName(stats, taken, STEP_HINTS, "stepName")
-                .ifPresent(p -> { fields.put("stepName", p); taken.add(p.path()); });
+        accept(fields, taken, "eventTime", inferEventTime(stats, taken));
+        accept(fields, taken, "eventId", inferEventId(stats, sample.size(), taken));
+        accept(fields, taken, "causationId", inferCausationId(stats, fields, taken));
+        accept(fields, taken, "executionId", inferExecutionId(stats, sample.size(), taken));
+        accept(fields, taken, "eventType", inferByCardinalityAndName(stats, taken, TYPE_HINTS, "eventType"));
+        accept(fields, taken, "serviceName", inferByCardinalityAndName(stats, taken, SERVICE_HINTS, "serviceName"));
+        accept(fields, taken, "stepName", inferByCardinalityAndName(stats, taken, STEP_HINTS, "stepName"));
 
         List<String> unresolved = new ArrayList<>();
         for (String required : List.of("eventId", "executionId", "eventType", "eventTime")) {
@@ -103,6 +100,14 @@ public class SourceMappingInferrer {
                 : List.of();
 
         return new InferredMapping(sample.size(), fields, eventTypes, unresolved, warnings);
+    }
+
+    private static void accept(Map<String, FieldProposal> fields, Set<String> taken, String field,
+            Optional<FieldProposal> proposal) {
+        proposal.ifPresent(found -> {
+            fields.put(field, found);
+            taken.add(found.path());
+        });
     }
 
     private Optional<FieldProposal> inferEventTime(Map<String, PathStats> stats, Set<String> taken) {

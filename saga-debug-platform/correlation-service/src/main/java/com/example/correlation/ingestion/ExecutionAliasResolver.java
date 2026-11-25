@@ -73,39 +73,36 @@ public class ExecutionAliasResolver {
                     declared.canonical(), alias.canonical(), eventId);
         }
 
-        Optional<SagaInstance> leftInstance = sagaInstances.findById(left.canonical());
-        Optional<SagaInstance> rightInstance = sagaInstances.findById(right.canonical());
+        boolean leftHasData = sagaInstances.findById(left.canonical()).isPresent();
+        boolean rightHasData = sagaInstances.findById(right.canonical()).isPresent();
 
-        if (leftInstance.isPresent() && rightInstance.isPresent()) {
-            return merge(left, leftInstance, right, rightInstance, eventId, observedAt);
+        if (leftHasData && rightHasData) {
+            return merge(left, right, eventId, observedAt);
         }
 
         // at most one side has data, so nothing to move
-        ExecutionKey canonical = rightInstance.isPresent() ? right : left;
+        ExecutionKey canonical = rightHasData ? right : left;
         register(left, canonical, eventId, observedAt);
         register(right, canonical, eventId, observedAt);
         return canonical;
     }
 
-    ExecutionKey merge(ExecutionKey left, Optional<SagaInstance> leftInstance,
-            ExecutionKey right, Optional<SagaInstance> rightInstance,
+    ExecutionKey merge(ExecutionKey requestedLeft, ExecutionKey requestedRight,
             String eventId, Instant observedAt) {
         // lock both runs in a fixed order so two merges cannot deadlock
-        lockInOrder(left, right);
+        lockInOrder(requestedLeft, requestedRight);
 
         // another worker may have merged them while we waited
-        ExecutionKey settledLeft = lookup(left).orElse(left);
-        ExecutionKey settledRight = lookup(right).orElse(right);
-        if (settledLeft.equals(settledRight)) {
+        ExecutionKey left = lookup(requestedLeft).orElse(requestedLeft);
+        ExecutionKey right = lookup(requestedRight).orElse(requestedRight);
+        if (left.equals(right)) {
             log.debug("Executions {} and {} were already folded while this worker waited",
-                    left.canonical(), right.canonical());
-            return settledLeft;
+                    requestedLeft.canonical(), requestedRight.canonical());
+            return left;
         }
 
-        leftInstance = sagaInstances.findById(settledLeft.canonical());
-        rightInstance = sagaInstances.findById(settledRight.canonical());
-        left = settledLeft;
-        right = settledRight;
+        Optional<SagaInstance> leftInstance = sagaInstances.findById(left.canonical());
+        Optional<SagaInstance> rightInstance = sagaInstances.findById(right.canonical());
 
         ExecutionKey canonical = survivorOf(left, leftInstance, right, rightInstance);
         ExecutionKey merged = canonical.equals(left) ? right : left;
