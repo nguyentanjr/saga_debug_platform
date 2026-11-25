@@ -17,9 +17,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 public class ExecutionProjectionService {
+    private static final StartRef NO_START = new StartRef(null, null, StartProvenance.NO_START_REFERENCE);
+
     public ExecutionProjection project(String sagaId, List<SagaEvent> events, WorkflowSpec spec) {
         if (events == null || events.isEmpty()) {
             return ExecutionProjection.empty(sagaId);
@@ -95,7 +98,7 @@ public class ExecutionProjectionService {
         List<String> evidence = observations.stream()
                 .map(o -> o.event().getEventId())
                 .filter(Objects::nonNull)
-                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+                .collect(Collectors.toCollection(ArrayList::new));
         if (startRef.event() != null && startRef.event().getEventId() != null
                 && !evidence.contains(startRef.event().getEventId())) {
             evidence.add(0, startRef.event().getEventId());
@@ -143,7 +146,7 @@ public class ExecutionProjectionService {
 
         List<String> predecessors = spec.predecessorSteps(stepId);
         if (predecessors.isEmpty()) {
-            return new StartRef(null, null, StartProvenance.NO_START_REFERENCE);
+            return NO_START;
         }
 
         List<SagaEvent> predecessorTerminals = predecessors.stream()
@@ -152,19 +155,16 @@ public class ExecutionProjectionService {
                 .toList();
 
         boolean isJoin = spec.isJoin(stepId);
-        if (isJoin) {
-            if (predecessorTerminals.size() != predecessors.size()) {
-                return new StartRef(null, null, StartProvenance.NO_START_REFERENCE);
-            }
-        } else if (predecessorTerminals.isEmpty()) {
-            return new StartRef(null, null, StartProvenance.NO_START_REFERENCE);
+        boolean joinStillWaiting = isJoin && predecessorTerminals.size() != predecessors.size();
+        if (joinStillWaiting || predecessorTerminals.isEmpty()) {
+            return NO_START;
         }
 
         SagaEvent latest = predecessorTerminals.stream()
                 .max(Comparator.comparing(SagaEvent::getTimestamp))
                 .orElse(null);
         if (latest == null) {
-            return new StartRef(null, null, StartProvenance.NO_START_REFERENCE);
+            return NO_START;
         }
 
         return new StartRef(latest, latest.getTimestamp(),
