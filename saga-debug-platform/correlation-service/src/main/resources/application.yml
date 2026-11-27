@@ -8,9 +8,6 @@ spring:
   task:
     scheduling:
       pool:
-        # Seven @Scheduled jobs share this pool. The Spring default is a single
-        # thread, so one slow detector pass delayed every other detector and the
-        # auto-RCA sweep behind it.
         size: 4
 
   datasource:
@@ -34,12 +31,6 @@ spring:
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     listener:
-      # Events for one saga arrive on eight different topics, so partition assignment
-      # does not keep them on one thread — two threads can read-modify-write the same
-      # SagaInstance. That is now safe rather than silent: saga_instances carries a
-      # @Version column, so the losing writer fails and the listener rethrows, and the
-      # container retries with backoff. Conflicts cost a retry, not a lost update.
-      # Contention stays low because a saga only ever sees a handful of events.
       concurrency: 3
     consumer:
       group-id: correlation-engine-group
@@ -47,59 +38,17 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       properties:
-        # Subscriptions are by pattern, so a topic created after start-up is read only once
-        # the consumer refreshes metadata — 5 minutes by Kafka's default. Systems commonly let
-        # the broker create a topic on its first message: FTGO's command topics appear with
-        # the first saga, and its first runs were silent to the observer until the refresh
-        # (ROADMAP EXT-TOPIC-DISCOVERY). 30 s bounds that gap; the cost is one metadata
-        # request per consumer every 30 s.
         "[metadata.max.age.ms]": 30000
 
 correlation:
-  # Bearer token required to write observations over HTTP (/api/ingest/**,
-  # /api/admin/inject-event). Empty closes those writes (503) instead of leaving them open:
-  # an observation is diagnostic evidence, so whoever can post can author a diagnosis.
   ingest:
     token: ${CORRELATION_INGEST_TOKEN:}
 
-  # Where an operator keeps the YAML describing a system this build was never told about:
-  # <dir>/ingestion/*.yaml for how to read its events, <dir>/workflows/*.yaml for what its
-  # saga is supposed to do, <dir>/rules/*.yaml for what a symptom means there. Empty means
-  # the packaged declarations only.
-  #
-  # Attaching to a new system is then a file on disk and a restart, not a rebuild of this
-  # service — which is what makes "the integration is three YAML files" true of a
-  # deployment and not only of the source tree.
   declarations:
     dir: ${CORRELATION_DECLARATIONS_DIR:}
 
   kafka:
-    # Which topics carry saga telemetry. Adding a workflow means extending this
-    # pattern, not editing SagaEventConsumer. Kafka picks up newly created matching
-    # topics within metadata.max.age.ms.
-    #
-    # This is the single-cluster form and stays the default. A deployment whose observed
-    # systems live on more than one cluster declares them instead, and then the count and
-    # the connection details are configuration rather than a release:
-    #
-    #   correlation:
-    #     kafka:
-    #       clusters:
-    #         - name: retail-eu
-    #           bootstrap-servers: kafka-eu:9092
-    #           topic-pattern: "order-.*|payment-.*"
-    #         - name: logistics-us
-    #           bootstrap-servers: kafka-us:9092
-    #           topic-pattern: "shipment-.*"
-    #
-    # A cluster's name is what a source mapping's `cluster:` field refers to. It matters
-    # because a topic name is unique inside one cluster and nowhere else: two clusters can
-    # both carry `order-created`, and a mapping that did not say which one it meant would
-    # file two systems' runs under one identity.
     topic-pattern: "order-.*|payment-.*|inventory-.*|refund-.*"
-    # Unread records, summed over every observed partition, past which /actuator/health
-    # reports the ingestionBacklog component as LAGGING. Findings about recent runs are
-    # then suspect: their later events may simply not have been read yet.
     backlog-warning-threshold: 10000
 
 management:
@@ -109,7 +58,6 @@ management:
         include: health,info,metrics
   endpoint:
     health:
-      # Shows the ingestionBacklog component (L2); the observer holds no secrets there.
       show-details: always
 
 anomaly:
@@ -126,16 +74,9 @@ anomaly:
     delayed-compensation-multiplier: 1.5
     compensation-recent-lookback: 10m
     service-crash-timeout-multiplier: 3
-    # LEGACY    — duration = gap between positionally adjacent events (original)
-    # PROJECTION — duration = operation duration from the execution projection
-    # SHADOW     — run both, keep LEGACY authoritative, log every divergence
-    # PROJECTION since F20: adjacency measured a step up to its own start event.
     step-timeout-mode: PROJECTION
 
 retention:
-  # Off by default: this deletes telemetry permanently, and evaluation runs in this
-  # repository depend on historical sagas being present. Enable it for any long-lived
-  # deployment — without it saga_events, anomalies and rca_results grow without bound.
   enabled: false
   max-age: 30d
   batch-size: 5000

@@ -68,7 +68,7 @@ class EventTimeProvenanceTest {
         run = UUID.randomUUID().toString();
         mapping = SourceMapping.identity();
         mappings = mock(SourceMappingRegistry.class);
-        when(mappings.forTopic(any(), anyString())).thenReturn(mapping);
+        when(mappings.forTopic(anyString())).thenReturn(mapping);
         detector = mock(AnomalyDetectionService.class);
         WorkflowRegistry workflows = new WorkflowRegistry();
         workflows.load();

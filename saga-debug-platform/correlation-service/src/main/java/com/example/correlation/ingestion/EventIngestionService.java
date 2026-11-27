@@ -50,7 +50,7 @@ public class EventIngestionService {
     }
 
     public IngestionResult ingest(RawObservation raw) {
-        SourceMapping mapping = sourceMappings.forTopic(raw.origin(), raw.sourceRef());
+        SourceMapping mapping = sourceMappings.forTopic(raw.sourceRef());
 
         String systemName = mapping.systemName() != null
                 ? mapping.systemName()

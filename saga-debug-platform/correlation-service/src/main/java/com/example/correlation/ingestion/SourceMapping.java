@@ -20,7 +20,6 @@ public class SourceMapping {
     private String name;
     private String topicPattern;
 
-    private String cluster;
     private Fields fields = new Fields();
 
     private Map<String, String> eventTypes = new LinkedHashMap<>();
@@ -104,17 +103,8 @@ public class SourceMapping {
         return aliasSource != null && !aliasSource.isBlank() ? aliasSource : systemName();
     }
 
-    public String getCluster() { return cluster; }
-    public void setCluster(String cluster) { this.cluster = cluster; }
-
     public boolean matches(String topic) {
         return compiledPattern != null && topic != null && compiledPattern.matcher(topic).matches();
-    }
-
-    public boolean matches(String origin, String topic) {
-        if (!matches(topic)) return false;
-        if (cluster == null || cluster.isBlank()) return true;
-        return cluster.equals(origin);
     }
 
     public String translateEventType(String sourceType) {

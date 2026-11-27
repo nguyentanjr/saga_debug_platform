@@ -97,21 +97,9 @@ public class SourceMappingRegistry {
 
     public SourceMapping forTopic(String topic) {
         return mappings.stream()
-                .filter(mapping -> mapping.matches(null, topic))
+                .filter(mapping -> mapping.matches(topic))
                 .findFirst()
                 .orElse(identity);
-    }
-
-    public SourceMapping forTopic(String origin, String topic) {
-        if (origin == null || origin.isBlank()) return forTopic(topic);
-
-        return mappings.stream()
-                .filter(mapping -> origin.equals(mapping.getCluster()) && mapping.matches(topic))
-                .findFirst()
-                .orElseGet(() -> mappings.stream()
-                        .filter(mapping -> mapping.matches(origin, topic))
-                        .findFirst()
-                        .orElse(identity));
     }
 
     public List<String> sourceNames() {

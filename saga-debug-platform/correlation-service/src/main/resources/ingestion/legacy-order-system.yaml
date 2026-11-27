@@ -1,35 +1,3 @@
-# Reading an external system that knows nothing about this platform.
-#
-# Nothing here asks the source to change. Its events keep their own field names, their own
-# nesting, their own event-type vocabulary and their own correlation key; the mapping only
-# states where each of those lives. Without it, attaching the platform to a system meant
-# editing that system's producers to emit sagaId / eventId / eventType / timestamp — a
-# change to code this platform is only supposed to observe.
-#
-# This mapping is live, not an example file. It is reachable over HTTP, because
-# /api/ingest/{source} matches {source} against the same topicPattern that Kafka topics
-# are matched against:
-#
-#   curl -X POST http://localhost:8084/api/ingest/legacy.orders.events \
-#        -H "Authorization: Bearer $CORRELATION_INGEST_TOKEN" \
-#        -H 'Content-Type: application/json' \
-#        -d '{"id":"evt-8891",
-#             "type":"order.payment.captured",
-#             "occurredAt":"2026-01-01T00:00:04Z",
-#             "emittedBy":{"service":"billing-api"},
-#             "context":{"orderNumber":"ORD-42","causedBy":"evt-8890"}}'
-#
-# The platform reads that payload, correlates it under ORD-42, and translates
-# order.payment.captured into the PAYMENT_COMPLETED the workflow specification is written
-# about — without the sending system knowing any of that.
-#
-# It never collides with the demo services: the Kafka consumer only subscribes to topics
-# matching correlation.kafka.topic-pattern, which does not include legacy.orders.*.
-#
-# To read a different system, copy this file and change the paths. POST a sample of that
-# system's events to /api/ingest/{source}/infer and the platform proposes the file for
-# you, with the evidence behind each field it inferred.
-
 source:
   name: legacy-order-system
   topicPattern: 'legacy\.orders\..*'
@@ -37,28 +5,16 @@ source:
   fields:
     eventId: id
 
-    # The correlation key is a business identifier, not a saga id. Nothing in this system
-    # has ever heard the word "saga", and it does not need to.
     executionId: context.orderNumber
 
     eventType: type
     eventTime: occurredAt
     serviceName: emittedBy.service
 
-    # Their own name for "the event this one responded to". Having it means step
-    # boundaries are read from what the producer reported rather than inferred from the
-    # specification — the difference ExecutionProjection records as StartProvenance.
     causationId: context.causedBy
 
-    # The trace id, which this system nests under its own context object rather than
-    # putting at the top level under the name this platform happens to use. Declaring it
-    # is what links a diagnosis here to the traces in Jaeger; without the declaration the
-    # platform would report this system as publishing no trace context at all, which is
-    # a statement about the platform's assumptions rather than about the system.
     traceId: context.traceId
 
-  # Their vocabulary against the workflow specification's. Renaming either side would be
-  # a change to a system this platform is only meant to observe.
   eventTypes:
     "order.created": ORDER_CREATED
     "order.payment.captured": PAYMENT_COMPLETED

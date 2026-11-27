@@ -1,12 +1,8 @@
 package com.example.correlation.messaging;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
@@ -32,84 +28,37 @@ import org.springframework.stereotype.Component;
 public class KafkaClusterListeners implements SmartLifecycle {
     private static final Logger log = LoggerFactory.getLogger(KafkaClusterListeners.class);
 
-    private final List<ConcurrentMessageListenerContainer<String, String>> containers = new ArrayList<>();
-    private final List<ConsumerGroup> groups = new ArrayList<>();
+    private final ConcurrentMessageListenerContainer<String, String> container;
+    private final ConsumerGroup group;
     private volatile boolean running;
 
     public KafkaClusterListeners(KafkaProperties kafkaProperties,
                                  KafkaSourceProperties sourceProperties,
                                  SagaEventConsumer consumer,
                                  CommonErrorHandler errorHandler) {
-        for (KafkaSourceProperties.Cluster cluster : declaredClusters(kafkaProperties, sourceProperties)) {
-            containers.add(containerFor(kafkaProperties, cluster, consumer, errorHandler));
-            groups.add(groupFor(kafkaProperties, cluster));
-        }
+        String bootstrapServers = String.join(",", kafkaProperties.getBootstrapServers());
+        String topicPattern = sourceProperties.getTopicPattern();
+        log.info("Reading Kafka at {} for topics matching {}", bootstrapServers, topicPattern);
+        this.container = containerFor(kafkaProperties, bootstrapServers, topicPattern, consumer, errorHandler);
+        this.group = groupFor(kafkaProperties, bootstrapServers);
     }
 
-    private static List<KafkaSourceProperties.Cluster> declaredClusters(
-            KafkaProperties kafkaProperties, KafkaSourceProperties sourceProperties) {
-        if (!sourceProperties.declaresClusters()) {
-            KafkaSourceProperties.Cluster only = new KafkaSourceProperties.Cluster();
-            only.setBootstrapServers(String.join(",", kafkaProperties.getBootstrapServers()));
-            only.setTopicPattern(sourceProperties.getTopicPattern());
-            log.info("Reading one Kafka cluster at {} for topics matching {}",
-                    only.getBootstrapServers(), only.getTopicPattern());
-            return List.of(only);
-        }
-
-        List<KafkaSourceProperties.Cluster> usable = new ArrayList<>();
-        Set<String> namesSeen = new HashSet<>();
-        for (KafkaSourceProperties.Cluster cluster : sourceProperties.getClusters()) {
-            List<String> missing = cluster.missingFields();
-            if (!missing.isEmpty()) {
-                log.error("Kafka cluster declaration is missing {} and will not be read: {}",
-                        missing, cluster.getName() != null ? cluster.getName() : "(unnamed)");
-                continue;
-            }
-
-            if (!namesSeen.add(cluster.getName())) {
-                log.error("Kafka cluster '{}' is declared more than once; the second "
-                        + "declaration is ignored. A mapping scoped to that name could not "
-                        + "say which of them it meant.", cluster.getName());
-                continue;
-            }
-            usable.add(cluster);
-            log.info("Reading Kafka cluster '{}' at {} for topics matching {}",
-                    cluster.getName(), cluster.getBootstrapServers(), cluster.getTopicPattern());
-        }
-        if (usable.isEmpty()) {
-            log.error("Every declared Kafka cluster was unusable; this deployment reads no "
-                    + "Kafka telemetry at all. HTTP ingestion is unaffected.");
-        }
-        return usable;
-    }
-
-    private static ConsumerGroup groupFor(KafkaProperties kafkaProperties, KafkaSourceProperties.Cluster cluster) {
+    private static ConsumerGroup groupFor(KafkaProperties kafkaProperties, String bootstrapServers) {
         Map<String, Object> admin = kafkaProperties.buildAdminProperties(null);
-        admin.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, cluster.getBootstrapServers());
-        String groupId = cluster.getGroupId() != null && !cluster.getGroupId().isBlank()
-                ? cluster.getGroupId() : kafkaProperties.getConsumer().getGroupId();
-        return new ConsumerGroup(admin, groupId);
+        admin.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        return new ConsumerGroup(admin, kafkaProperties.getConsumer().getGroupId());
     }
 
     private static ConcurrentMessageListenerContainer<String, String> containerFor(
-            KafkaProperties kafkaProperties, KafkaSourceProperties.Cluster cluster,
+            KafkaProperties kafkaProperties, String bootstrapServers, String topicPattern,
             SagaEventConsumer consumer, CommonErrorHandler errorHandler) {
-        Map<String, Object> consumerProperties = kafkaProperties.buildConsumerProperties();
-        consumerProperties.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, cluster.getBootstrapServers());
-        if (cluster.getGroupId() != null && !cluster.getGroupId().isBlank()) {
-            consumerProperties.put(ConsumerConfig.GROUP_ID_CONFIG, cluster.getGroupId());
-        }
-        if (cluster.getAutoOffsetReset() != null && !cluster.getAutoOffsetReset().isBlank()) {
-            consumerProperties.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, cluster.getAutoOffsetReset());
-        }
+        Map<String, Object> consumerProperties = kafkaProperties.buildConsumerProperties(null);
+        consumerProperties.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
 
-        ContainerProperties containerProperties =
-                new ContainerProperties(Pattern.compile(cluster.getTopicPattern()));
-        String origin = cluster.getName();
+        ContainerProperties containerProperties = new ContainerProperties(Pattern.compile(topicPattern));
         containerProperties.setMessageListener(
                 (MessageListener<String, String>) (ConsumerRecord<String, String> record) ->
-                        consumer.handle(record, origin));
+                        consumer.handleEvent(record));
         containerProperties.setGroupId(
                 consumerProperties.get(ConsumerConfig.GROUP_ID_CONFIG) instanceof String id
                         ? id : null);
@@ -117,26 +66,20 @@ public class KafkaClusterListeners implements SmartLifecycle {
         ConcurrentMessageListenerContainer<String, String> container =
                 new ConcurrentMessageListenerContainer<>(
                         new DefaultKafkaConsumerFactory<>(consumerProperties), containerProperties);
-        container.setConcurrency(concurrencyOf(cluster, kafkaProperties));
+        container.setConcurrency(concurrencyOf(kafkaProperties));
         container.setCommonErrorHandler(errorHandler);
-        container.setBeanName("saga-events-" + (origin != null ? origin : "default"));
+        container.setBeanName("saga-events-default");
         container.setAutoStartup(false);
         return container;
     }
 
-    private static int concurrencyOf(KafkaSourceProperties.Cluster cluster, KafkaProperties kafkaProperties) {
-        if (cluster.getConcurrency() != null) return cluster.getConcurrency();
+    private static int concurrencyOf(KafkaProperties kafkaProperties) {
         Integer listenerDefault = kafkaProperties.getListener().getConcurrency();
         return listenerDefault != null ? listenerDefault : 1;
     }
 
     public Long backlog() {
-        Long total = null;
-        for (ConsumerGroup group : groups) {
-            Long lag = group.backlog();
-            if (lag != null) total = (total == null ? 0 : total) + lag;
-        }
-        return total;
+        return group.backlog();
     }
 
     static Long backlogOf(Map<TopicPartition, Long> committed, Map<TopicPartition, Long> ends) {
@@ -189,20 +132,16 @@ public class KafkaClusterListeners implements SmartLifecycle {
         }
     }
 
-    public int containerCount() {
-        return containers.size();
-    }
-
     @Override
     public void start() {
-        containers.forEach(ConcurrentMessageListenerContainer::start);
+        container.start();
         running = true;
     }
 
     @Override
     public void stop() {
-        containers.forEach(ConcurrentMessageListenerContainer::stop);
-        groups.forEach(ConsumerGroup::close);
+        container.stop();
+        group.close();
         running = false;
     }
 

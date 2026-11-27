@@ -24,7 +24,7 @@ public class SagaEventConsumer {
         this.ingestionService = ingestionService;
     }
 
-    public void handle(ConsumerRecord<String, String> record, String origin) {
+    public void handleEvent(ConsumerRecord<String, String> record) {
         String transportRef = record.topic() + "-" + record.partition() + "-" + record.offset();
         RawObservation raw = new RawObservation(
                 record.topic(),
@@ -32,20 +32,15 @@ public class SagaEventConsumer {
                 Instant.ofEpochMilli(record.timestamp()),
                 transportRef,
                 record.key(),
-                headersOf(record),
-                origin);
+                headersOf(record));
 
         IngestionResult result = ingestionService.ingest(raw);
 
         if (result.isPermanentlyRejected()) {
-            log.error("Dropping record cluster={} topic={} partition={} offset={}: {} ({})",
-                    origin != null ? origin : "default", record.topic(), record.partition(),
-                    record.offset(), result.outcome(), result.reason());
+            log.error("Dropping record topic={} partition={} offset={}: {} ({})",
+                    record.topic(), record.partition(), record.offset(),
+                    result.outcome(), result.reason());
         }
-    }
-
-    public void handleEvent(ConsumerRecord<String, String> record) {
-        handle(record, null);
     }
 
     private static Map<String, String> headersOf(ConsumerRecord<String, String> record) {

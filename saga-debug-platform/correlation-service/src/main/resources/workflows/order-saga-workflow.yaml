@@ -6,8 +6,6 @@ workflow:
     - id: CREATE_ORDER
       service: order-service
       timeout: 5s
-      # No compensation declared: cancelling a created order is not implemented by any
-      # service, and naming a step that does not exist would route a failure nowhere.
       events:
         started: ORDER_CREATED
         completed: ORDER_CREATED
@@ -24,17 +22,11 @@ workflow:
         started: PAYMENT_STARTED
         completed: PAYMENT_COMPLETED
         failed: PAYMENT_FAILED
-        # Emitted by the Resilience4j retry listener on each failed attempt.
-        # Declared here so the projection can attribute retries to this step
-        # instead of the detectors hard-coding the PAYMENT_RETRY event name.
         retry: PAYMENT_RETRY
 
     - id: RESERVE_INVENTORY
       service: inventory-service
       timeout: 5s
-      # No compensation declared: releasing a reservation is not implemented, and
-      # reserving inventory is the last forward step, so nothing downstream can fail
-      # and require it to be undone.
       events:
         started: INVENTORY_STARTED
         completed: INVENTORY_RESERVED
@@ -61,7 +53,6 @@ workflow:
     - from: RESERVE_INVENTORY
       to: COMPLETED
       condition: SUCCESS
-    # Failure transitions
     - from: CREATE_ORDER
       to: FAILED
       condition: FAILED
@@ -75,7 +66,6 @@ workflow:
       to: COMPENSATED
       condition: COMPENSATION_COMPLETE
 
-  # Valid event type for each step
   validEventTypes:
     ORDER_CREATED: CREATE_ORDER
     PAYMENT_COMPLETED: PROCESS_PAYMENT

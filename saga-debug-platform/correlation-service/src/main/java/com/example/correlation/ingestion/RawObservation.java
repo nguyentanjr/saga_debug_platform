@@ -9,19 +9,13 @@ public record RawObservation(
         Instant transportTime,
         String fallbackEventId,
         String key,
-        Map<String, String> headers,
-        String origin) {
+        Map<String, String> headers) {
     public RawObservation {
         headers = headers != null ? Map.copyOf(headers) : Map.of();
     }
 
-    public RawObservation(String sourceRef, String payload, Instant transportTime,
-                          String fallbackEventId, String key, Map<String, String> headers) {
-        this(sourceRef, payload, transportTime, fallbackEventId, key, headers, null);
-    }
-
     public static RawObservation of(String sourceRef, String payload, Instant transportTime) {
-        return new RawObservation(sourceRef, payload, transportTime, null, null, Map.of(), null);
+        return new RawObservation(sourceRef, payload, transportTime, null, null, Map.of());
     }
 
     public String header(String name) {

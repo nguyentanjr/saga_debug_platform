@@ -1,26 +1,3 @@
-# Anomaly-signature rules — LOADED AT RUNTIME by RuleRegistry.
-#
-# Replaces the earlier rule.yaml, which was a design sketch that nothing read. These
-# nine rules do execute; editing this file changes what the platform diagnoses, with no
-# rebuild.
-#
-# A rule belongs here when a set of anomaly types is its ENTIRE condition. The other nine
-# rules stay as methods in RcaService because they need something this format cannot say:
-# the source's failure text read through its failure-signals declaration (R01, R23, and
-# R02's evidence tier), the saga's current status (R06, R14, R21), arithmetic
-# over timestamps against a workflow threshold (R05), the absence of an event the spec
-# requires (R10, R11), or evidence computed from the anomaly set (R20). See the class
-# comment on AnomalySignatureRule.
-#
-# Fields:
-#   id                 rule identifier, reported with the diagnosis
-#   rootCause          the label this rule concludes
-#   severity           CRITICAL | HIGH | MEDIUM | LOW
-#   evidence           STRONG_EVIDENCE | SUPPORTING_EVIDENCE | WEAK_EVIDENCE
-#   matchesAnyAnomaly  any one of these anomaly types fires the rule
-#   evidenceNotes      fixed observations added beside the matched anomaly (optional)
-#   suggestions        what the reader should check
-
 rules:
 
   - id: R03
@@ -32,8 +9,6 @@ rules:
       - "Enforce final-state immutability"
       - "Check for duplicate terminal event delivery"
 
-  # Two anomaly types, one conclusion: a terminal state was written over, whether that
-  # showed up as an event arriving after the end or as the status moving backwards.
   - id: R04
     rootCause: TERMINAL_STATE_OVERWRITE
     severity: HIGH

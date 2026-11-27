@@ -57,7 +57,6 @@ public class ExecutionAliasResolver {
                 return known.get();
             }
 
-            // first time we see this key: record it so two workers cannot create two runs for it
             register(declared, declared, eventId, observedAt);
             return declared;
         }
@@ -80,7 +79,6 @@ public class ExecutionAliasResolver {
             return merge(left, right, eventId, observedAt);
         }
 
-        // at most one side has data, so nothing to move
         ExecutionKey canonical = rightHasData ? right : left;
         register(left, canonical, eventId, observedAt);
         register(right, canonical, eventId, observedAt);
@@ -89,10 +87,8 @@ public class ExecutionAliasResolver {
 
     ExecutionKey merge(ExecutionKey requestedLeft, ExecutionKey requestedRight,
             String eventId, Instant observedAt) {
-        // lock both runs in a fixed order so two merges cannot deadlock
         lockInOrder(requestedLeft, requestedRight);
 
-        // another worker may have merged them while we waited
         ExecutionKey left = lookup(requestedLeft).orElse(requestedLeft);
         ExecutionKey right = lookup(requestedRight).orElse(requestedRight);
         if (left.equals(right)) {
@@ -115,7 +111,6 @@ public class ExecutionAliasResolver {
         int movedAnomalies = anomalies.repointSaga(merged.canonical(), canonical.canonical());
         int movedDiagnoses = rcaResults.repointSaga(merged.canonical(), canonical.canonical());
 
-        // "never observed" findings were made on half the data, so withdraw them
         int retracted = anomalies.retractClaims(canonical.canonical(), AnomalyType.absenceClaims(),
                 Instant.now(),
                 "executions " + left.canonical() + " and " + right.canonical()
